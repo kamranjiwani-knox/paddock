@@ -116,8 +116,8 @@ export class AgentRunner {
       repoRoot: resolve(config.repoRoot),
       agentDir: config.agentDir ?? join(config.repoRoot, ".agent"),
       blockedTools: config.blockedTools ?? DEFAULT_BLOCKED_TOOLS,
-      responseTimeoutMs: config.responseTimeoutMs ?? 60_000,
-      quietMs: config.quietMs ?? 5_000,
+      responseTimeoutMs: config.responseTimeoutMs ?? 120_000,
+      quietMs: config.quietMs ?? 15_000,
       maxRetries: config.maxRetries ?? 2,
       retryDelayMs: config.retryDelayMs ?? 5_000,
       scenarioDelayMs: config.scenarioDelayMs ?? 2_000,
@@ -171,8 +171,23 @@ export class AgentRunner {
     process.on("unhandledRejection", rejectionHandler)
 
     try {
-      // Copy .agent to temp
+      // Copy .agent to temp and ensure required subdirs exist
       cpSync(this.config.agentDir, tempDir, { recursive: true })
+      for (const sub of ["data", "data/sessions", "sessions", "memory", "skills"]) {
+        mkdirSync(join(tempDir, sub), { recursive: true })
+      }
+
+      // Force open access for eval user
+      const configPath = join(tempDir, "agent.config.json")
+      try {
+        const agentConfig = existsSync(configPath)
+          ? JSON.parse(readFileSync(configPath, "utf-8"))
+          : {}
+        agentConfig.accessStrategy = "open"
+        Bun.write(configPath, JSON.stringify(agentConfig, null, 2))
+      } catch {
+        Bun.write(configPath, JSON.stringify({ accessStrategy: "open" }, null, 2))
+      }
 
       // Apply scenario setup files
       if (scenario.setup?.files) {
@@ -186,7 +201,6 @@ export class AgentRunner {
 
       // Read SOUL.md and config snapshots
       const soulMdPath = join(tempDir, "SOUL.md")
-      const configPath = join(tempDir, "agent.config.json")
       const soulMd = existsSync(soulMdPath) ? readFileSync(soulMdPath, "utf-8") : ""
       const configJson = existsSync(configPath) ? readFileSync(configPath, "utf-8") : "{}"
 
@@ -213,6 +227,8 @@ export class AgentRunner {
       const init = new InitModule(tempDir, existsSync(exampleDir) ? exampleDir : tempDir)
 
       const prevEnv = { ...process.env }
+      // Override model for eval — runtime reads CLAUDE_MODEL from env
+      process.env.CLAUDE_MODEL = process.env.EVAL_LLM_MODEL ?? process.env.CLAUDE_MODEL ?? "claude-sonnet-4-6"
       if (scenario.setup?.env) {
         Object.assign(process.env, scenario.setup.env)
       }
@@ -235,7 +251,14 @@ export class AgentRunner {
         if (msg.delayMs) await sleep(msg.delayMs)
 
         try {
+          const beforeCount = mockChannel.getSentMessages().length
           await mockChannel.simulateIncoming(msg.text, msg.from || "eval-user")
+          // Collect any synchronous responses (e.g. empty message → immediate reply)
+          const afterSync = mockChannel.getSentMessages().slice(beforeCount)
+          for (const m of afterSync) {
+            responses.push({ text: m.text, ts: m.ts })
+          }
+          // Then wait for async responses (fire-and-forget tasks)
           const agentResponses = await mockChannel.waitForAllResponses(
             this.config.quietMs,
             this.config.responseTimeoutMs
@@ -253,8 +276,8 @@ export class AgentRunner {
         }
       }
 
-      // Give fire-and-forget tasks a moment to settle
-      await sleep(1000)
+      // Give fire-and-forget tasks a moment to settle (heartbeat, session writes)
+      await sleep(3000)
 
       // Stop runtime
       try {
@@ -337,6 +360,10 @@ export class AgentRunner {
         traces.push(trace)
         const status = trace.errors.length === 0 ? "OK" : `${trace.errors.length} errors`
         console.log(`[paddock] scenario ${scenario.id}: ${status} | ${trace.responses.length} responses | ${trace.toolCalls.length} tool calls | ${trace.timing.totalMs}ms`)
+        // Log errors for debugging
+        for (const err of trace.errors) {
+          console.log(`[paddock]   ERROR [${err.phase}]: ${err.message.slice(0, 200)}`)
+        }
       } catch (err) {
         // Never let a single scenario crash the suite
         console.error(`[paddock] scenario ${scenario.id} crashed: ${err}`)

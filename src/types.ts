@@ -211,6 +211,7 @@ export interface EvalConfig {
   maxTimeMs: number
   maxLlmCalls: number
   autoPush: boolean
+  useBranch: boolean         // create separate git branch for eval (default: false)
   branchPrefix: string
   blockedTools: string[]
 }
@@ -240,6 +241,7 @@ export const DEFAULT_EVAL_CONFIG: Omit<EvalConfig, "repoRoot" | "agentDir" | "ju
   maxTimeMs: 30 * 60 * 1000,
   maxLlmCalls: 100,
   autoPush: true,
-  branchPrefix: "eval",
+  useBranch: false,
+  branchPrefix: "paddock",
   blockedTools: DEFAULT_BLOCKED_TOOLS,
 }

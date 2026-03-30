@@ -84,12 +84,16 @@ export class EvalOrchestrator {
     })
 
     try {
-      // ─── 1. INIT: create git branch ────────────────────────
-      const categoryLabel = config.categories?.join("-") ?? "full"
-      const branchName = `${config.branchPrefix}/${Date.now()}-${categoryLabel}`
-      await git.saveOriginalBranch()
-      await git.createBranch(branchName)
-      this.state.branchName = branchName
+      // ─── 1. INIT: optionally create git branch ─────────────
+      if (config.useBranch) {
+        const categoryLabel = config.categories?.join("-") ?? "full"
+        const branchName = `${config.branchPrefix}/${Date.now()}-${categoryLabel}`
+        await git.saveOriginalBranch()
+        await git.createBranch(branchName)
+        this.state.branchName = branchName
+      } else {
+        this.state.branchName = "(current branch)"
+      }
 
       // ─── 2. GENERATE SCENARIOS ─────────────────────────────
       this.updatePhase("generating_scenarios")
@@ -211,7 +215,9 @@ export class EvalOrchestrator {
 
         console.log(`[orchestrator] ${failures.length} failure patterns found, generating patches...`)
         const soulMd = this.readSoulMd()
-        const plan = await patcher.generatePlan(failures, soulMd)
+        // Pass failed traces so patcher can see actual runtime errors
+        const failedTraces = traces.filter(t => t.errors.length > 0)
+        const plan = await patcher.generatePlan(failures, soulMd, failedTraces)
         budget.recordLlmCall()
 
         if (plan.patches.length === 0) {
@@ -231,8 +237,12 @@ export class EvalOrchestrator {
           // Continue loop — maybe next iteration finds different patches
         } else {
           this.state.improvements.push(plan)
-          await git.commit(`paddock: iteration ${this.state.iteration + 1} — ${plan.estimatedImpact.slice(0, 50)}`)
-          console.log(`[orchestrator] patches applied and committed`)
+          if (config.useBranch) {
+            await git.commit(`paddock: iteration ${this.state.iteration + 1} — ${plan.estimatedImpact.slice(0, 50)}`)
+            console.log(`[orchestrator] patches applied and committed`)
+          } else {
+            console.log(`[orchestrator] patches applied (unstaged — commit manually)`)
+          }
         }
 
         budget.recordIteration()
@@ -242,13 +252,15 @@ export class EvalOrchestrator {
 
       // ─── 4. FINALIZE ──────────────────────────────────────
       if (this.state.passRate >= config.passThreshold) {
-        this.updatePhase("committing")
-        await git.commit(`paddock: final — pass rate ${(this.state.passRate * 100).toFixed(0)}%`)
-        if (config.autoPush) {
-          try {
-            await git.push()
-          } catch (err) {
-            console.warn(`[orchestrator] push failed: ${err}`)
+        if (config.useBranch) {
+          this.updatePhase("committing")
+          await git.commit(`paddock: final — pass rate ${(this.state.passRate * 100).toFixed(0)}%`)
+          if (config.autoPush) {
+            try {
+              await git.push()
+            } catch (err) {
+              console.warn(`[orchestrator] push failed: ${err}`)
+            }
           }
         }
         this.updatePhase("done")
@@ -256,15 +268,19 @@ export class EvalOrchestrator {
         this.updatePhase("failed")
       }
 
-      await git.restoreOriginalBranch()
+      if (config.useBranch) {
+        await git.restoreOriginalBranch()
+      }
 
     } catch (err) {
       this.state.error = err instanceof Error ? err.message : String(err)
       this.updatePhase("failed")
       console.error(`[orchestrator] fatal error:`, err)
-      try {
-        await git.restoreOriginalBranch()
-      } catch {}
+      if (config.useBranch) {
+        try {
+          await git.restoreOriginalBranch()
+        } catch {}
+      }
     }
 
     return this.state

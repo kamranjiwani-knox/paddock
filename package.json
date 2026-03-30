@@ -2,7 +2,25 @@
   "name": "@cleanslice/paddock",
   "version": "0.1.0",
   "type": "module",
+  "bin": {
+    "paddock": "./dist/cli.js",
+    "paddock-mcp": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./cli": "./dist/cli.js"
+  },
+  "files": [
+    "dist/",
+    "README.md"
+  ],
+  "engines": {
+    "bun": ">=1.0.0"
+  },
   "scripts": {
+    "build": "bun build src/cli.ts --outfile dist/cli.js --target bun --packages external && bun build src/index.ts --outfile dist/index.js --target bun --packages external",
+    "prepublishOnly": "bun run build",
     "eval": "bun run src/cli.ts run",
     "eval:quick": "bun run src/cli.ts run --count 3 --no-improve",
     "eval:full": "bun run src/cli.ts run --count 10",

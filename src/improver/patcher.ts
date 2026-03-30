@@ -14,13 +14,13 @@ function matchGlob(path: string, pattern: string): boolean {
   )
   return regex.test(path)
 }
-import type { JudgeProvider, FailurePattern, ImprovementPlan, Patch } from "../types"
+import type { JudgeProvider, FailurePattern, ImprovementPlan, Patch, ExecutionTrace } from "../types"
 
 const FILE_ALLOWLIST = [
   ".agent/SOUL.md",
   ".agent/skills/**/*.md",
   ".agent/agent.config.json",
-  "src/slices/**/*.ts",
+  "src/**/*.ts",
 ]
 
 const FILE_BLOCKLIST = [
@@ -50,17 +50,34 @@ export class Patcher {
   async generatePlan(
     failures: FailurePattern[],
     soulMd: string,
+    traces?: ExecutionTrace[],
   ): Promise<ImprovementPlan> {
-    // Read relevant files based on failure types
+    // Read relevant files based on failure types and error context
     const filesToRead: string[] = [".agent/SOUL.md"]
+
+    // Check if there are runtime errors in traces — these need code fixes, not prompt fixes
+    const runtimeErrors: string[] = []
+    if (traces) {
+      for (const trace of traces) {
+        for (const err of trace.errors) {
+          runtimeErrors.push(`[${err.phase}] ${err.message.slice(0, 300)}`)
+          // Runtime/LLM errors need fixes in the message handling pipeline
+          if (err.phase === "runtime" || err.message.includes("400") || err.message.includes("LLM error")) {
+            filesToRead.push("src/runtime.ts")
+          }
+        }
+      }
+    }
 
     for (const f of failures) {
       if (f.dimension === "soul_compliance") {
         filesToRead.push(".agent/SOUL.md")
       }
       if (f.dimension === "tool_usage" || f.dimension === "correctness") {
-        // Read a few key runtime files
         filesToRead.push("src/slices/agent/core/domain/agent.service.ts")
+      }
+      if (f.dimension === "error_handling") {
+        filesToRead.push("src/runtime.ts")
       }
     }
 
@@ -72,7 +89,7 @@ export class Patcher {
       if (existsSync(fullPath)) {
         try {
           const content = readFileSync(fullPath, "utf-8")
-          fileContents.push(`### ${f}\n\`\`\`\n${content.slice(0, 3000)}\n\`\`\``)
+          fileContents.push(`### ${f}\n\`\`\`\n${content.slice(0, 5000)}\n\`\`\``)
         } catch {
           // skip unreadable
         }
@@ -83,11 +100,15 @@ export class Patcher {
       .map((f, i) => `${i + 1}. **${f.dimension}** — frequency: ${f.frequency}, severity: ${f.severity.toFixed(1)}\n   Scenarios: ${f.exampleScenarios.join(", ")}\n   Suggestions:\n${f.suggestedFix.split("\n").map(s => `   - ${s}`).join("\n")}`)
       .join("\n\n")
 
+    const errorSection = runtimeErrors.length > 0
+      ? `\n## Runtime Errors from Execution Traces\nThese are actual errors that occurred during agent execution. Fix the ROOT CAUSE in the code, not the symptoms.\n${runtimeErrors.map(e => `- ${e}`).join("\n")}\n\n**IMPORTANT**: If the error is from the LLM API (e.g. "text content blocks must contain non-whitespace"), the fix must be in the code that SENDS messages to the LLM — not in SOUL.md or prompts. The agent never sees SOUL.md if the API call fails before it reaches the model. Look at src/runtime.ts handleMessage() and the message pipeline.\n`
+      : ""
+
     const prompt = `You are improving an AI agent's codebase based on evaluation failures.
 
 ## Failure Patterns (ordered by severity)
 ${formattedFailures}
-
+${errorSection}
 ## Current SOUL.md
 ${soulMd}
 
@@ -101,11 +122,13 @@ ${fileContents.join("\n\n")}
 - Changes must preserve TypeScript correctness
 - Do NOT add new dependencies
 - Prefer minimal, targeted changes
+- If the error is an API-level error (400, 404), fix the CODE that calls the API, not the prompt
 
 ## Task
 Propose specific code changes to address the top failure patterns.
 Focus on the highest-severity issues first.
-For SOUL.md changes, add rules or adjust personality to address failures.
+For API/runtime errors: fix the code that causes the error (e.g. validate input before sending to LLM).
+For behavior issues: fix SOUL.md or agent logic.
 For code changes, fix the specific behavior that caused failures.
 
 Output ONLY valid JSON (no markdown fences, no explanation):

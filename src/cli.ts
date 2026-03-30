@@ -2,7 +2,7 @@
 import { parseArgs } from "util"
 import { resolve } from "path"
 import { AgentRunner } from "./runner/agent-runner"
-import { loadScenarios } from "./scenario/loader"
+import { loadScenarios, loadPaddockConfig } from "./scenario/loader"
 import { ConsensusEngine } from "./evaluator/consensus"
 import { Judge } from "./evaluator/judge"
 import { createJudgeProvider } from "./evaluator/providers/factory"
@@ -54,6 +54,7 @@ ${bold("Options for 'run':")}
   --no-improve     Evaluate only, don't improve
   --no-push        Don't push to git
   --no-generate    Use only built-in templates, skip LLM generation
+  --branch         Create separate git branch and commit (default: off, stays on current branch)
 
 ${bold("Options for 'scenarios':")}
   --categories     Comma-separated categories
@@ -136,6 +137,7 @@ async function cmdRun(args: string[]) {
       "no-improve": { type: "boolean", default: false },
       "no-push": { type: "boolean", default: false },
       "no-generate": { type: "boolean", default: false },
+      branch: { type: "boolean", default: false },
     },
     strict: false,
   })
@@ -153,29 +155,49 @@ async function cmdRun(args: string[]) {
     process.exit(1)
   }
 
+  // Load .paddock/config.json as defaults — CLI flags override
+  const fileConfig = loadPaddockConfig(repoRoot)
+
   const categories = typeof values.categories === "string"
     ? values.categories.split(",") as ScenarioCategory[]
-    : undefined
+    : (fileConfig.categories as ScenarioCategory[] | undefined)
 
   const difficulties = typeof values.difficulties === "string"
     ? values.difficulties.split(",") as Difficulty[]
-    : undefined
+    : (fileConfig.difficulties as Difficulty[] | undefined)
+
+  // CLI --count overrides config.json scenarioCount (parseArgs sets default "10" only when flag absent)
+  const cliCountExplicit = args.includes("--count")
+  const scenarioCount = cliCountExplicit
+    ? parseInt(String(values.count))
+    : (typeof fileConfig.scenarioCount === "number" ? fileConfig.scenarioCount : 10)
+
+  const cliThresholdExplicit = args.includes("--threshold")
+  const passThreshold = cliThresholdExplicit
+    ? parseFloat(String(values.threshold))
+    : (typeof fileConfig.passThreshold === "number" ? fileConfig.passThreshold : 0.8)
+
+  const cliMaxIterExplicit = args.includes("--max-iter")
+  const maxIterations = cliMaxIterExplicit
+    ? parseInt(String(values["max-iter"]))
+    : (typeof fileConfig.maxIterations === "number" ? fileConfig.maxIterations : 5)
 
   const config: EvalConfig = {
     repoRoot,
     agentDir,
     categories,
     difficulties,
-    scenarioCount: parseInt(String(values.count ?? "10")),
-    passThreshold: parseFloat(String(values.threshold ?? "0.8")),
+    scenarioCount,
+    passThreshold,
     judges: judgeConfigs,
     autoImprove: !values["no-improve"],
-    maxIterations: parseInt(String(values["max-iter"] ?? "5")),
-    maxTimeMs: 30 * 60 * 1000,
-    maxLlmCalls: 100,
+    maxIterations,
+    maxTimeMs: (typeof fileConfig.maxTimeMs === "number" ? fileConfig.maxTimeMs : 30 * 60 * 1000),
+    maxLlmCalls: (typeof fileConfig.maxLlmCalls === "number" ? fileConfig.maxLlmCalls : 100),
     autoPush: !values["no-push"],
-    branchPrefix: "eval",
-    blockedTools: DEFAULT_BLOCKED_TOOLS,
+    useBranch: !!values.branch,
+    branchPrefix: "paddock",
+    blockedTools: (Array.isArray(fileConfig.blockedTools) ? fileConfig.blockedTools as string[] : DEFAULT_BLOCKED_TOOLS),
   }
 
   console.log(`  ${dim("Repo:")}       ${repoRoot}`)
@@ -185,6 +207,7 @@ async function cmdRun(args: string[]) {
   console.log(`  ${dim("Scenarios:")}  ${config.scenarioCount}`)
   console.log(`  ${dim("Threshold:")}  ${(config.passThreshold * 100).toFixed(0)}%`)
   console.log(`  ${dim("Improve:")}    ${config.autoImprove ? "yes" : "no"}`)
+  console.log(`  ${dim("Branch:")}     ${config.useBranch ? "yes (separate branch)" : "no (current branch)"}`)
   console.log()
 
   const orchestrator = new EvalOrchestrator(config)
@@ -217,6 +240,93 @@ async function cmdRun(args: string[]) {
         for (const reason of eval_.failureReasons.slice(0, 2)) {
           console.log(`       ${dim(typeof reason === "string" ? reason.slice(0, 100) : JSON.stringify(reason).slice(0, 100))}`)
         }
+      }
+    }
+  }
+
+  // Diagnostic report — show runtime errors from traces
+  if (state.traces.length > 0) {
+    const allErrors = state.traces.flatMap(t => t.errors)
+    if (allErrors.length > 0) {
+      console.log()
+      console.log(bold("  Diagnostic Report"))
+      console.log()
+
+      // Group errors by message to find patterns
+      const errorCounts = new Map<string, { count: number; phase: string; full: string }>()
+      for (const err of allErrors) {
+        const key = err.message.slice(0, 150)
+        const existing = errorCounts.get(key)
+        if (existing) {
+          existing.count++
+        } else {
+          errorCounts.set(key, { count: 1, phase: err.phase, full: err.message })
+        }
+      }
+
+      for (const [msg, info] of [...errorCounts.entries()].sort((a, b) => b[1].count - a[1].count)) {
+        console.log(`  ${red(`[${info.phase}]`)} ${yellow(`x${info.count}`)} ${msg}`)
+        if (info.full.length > 150) {
+          console.log(`  ${dim(info.full.slice(150, 400))}`)
+        }
+      }
+
+      // Recommendations
+      console.log()
+      console.log(bold("  Recommendations"))
+      console.log()
+
+      const hasRuntimeErrors = allErrors.some(e => e.phase === "runtime")
+      const hasChannelErrors = allErrors.some(e => e.phase === "channel")
+      const hasLlmErrors = allErrors.some(e => e.message.includes("400") || e.message.includes("401") || e.message.includes("API"))
+      const hasAccessErrors = allErrors.some(e => e.message.includes("access") || e.message.includes("allowed") || e.message.includes("pending"))
+      const hasImportErrors = allErrors.some(e => e.message.includes("import") || e.message.includes("module") || e.message.includes("Cannot find"))
+      const noResponses = state.traces.every(t => t.responses.length === 0)
+      const veryFast = state.traces.every(t => t.timing.totalMs < 100)
+
+      if (veryFast && noResponses) {
+        console.log(`  ${yellow("!")} All scenarios complete in <100ms with no responses.`)
+        console.log(`    This usually means the runtime crashes at startup, not during LLM calls.`)
+        console.log()
+      }
+
+      if (hasLlmErrors) {
+        console.log(`  ${yellow("!")} LLM API errors detected. Check:`)
+        console.log(`    - Is CLAUDE_CODE_OAUTH_TOKEN valid and not expired?`)
+        console.log(`    - Try: curl -H "Authorization: Bearer $CLAUDE_CODE_OAUTH_TOKEN" https://api.anthropic.com/v1/messages`)
+        console.log(`    - Try setting ANTHROPIC_API_KEY as fallback`)
+        console.log(`    - Model "claude-sonnet-4-6" may not be available for your tokens`)
+        console.log()
+      }
+
+      if (hasAccessErrors) {
+        console.log(`  ${yellow("!")} Access control blocking eval user. Check:`)
+        console.log(`    - Set accessStrategy to "open" in .agent/agent.config.json`)
+        console.log(`    - Or add "eval-user" to the allowlist`)
+        console.log()
+      }
+
+      if (hasImportErrors) {
+        console.log(`  ${yellow("!")} Module import errors. Check:`)
+        console.log(`    - Run "bun install" in the runtime repo`)
+        console.log(`    - Verify --repo path is correct`)
+        console.log()
+      }
+
+      if (hasRuntimeErrors && !hasLlmErrors && !hasAccessErrors && !hasImportErrors) {
+        console.log(`  ${yellow("!")} Runtime errors detected. Debug steps:`)
+        console.log(`    1. Run the runtime directly: cd ${config.repoRoot} && bun run dev`)
+        console.log(`    2. Send a test message via Telegram to verify it works`)
+        console.log(`    3. Check .agent/agent.config.json is valid JSON`)
+        console.log(`    4. Run with --count 1 for a single scenario to isolate`)
+        console.log()
+      }
+
+      if (hasChannelErrors && !hasRuntimeErrors) {
+        console.log(`  ${yellow("!")} Channel timeout — agent didn't respond within timeout.`)
+        console.log(`    - Increase timeout: --response-timeout 120000`)
+        console.log(`    - The LLM might be slow or the agent is stuck in a tool loop`)
+        console.log()
       }
     }
   }

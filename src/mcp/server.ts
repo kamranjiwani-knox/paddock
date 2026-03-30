@@ -2,7 +2,7 @@ import { z } from "zod"
 import { EvalOrchestrator } from "../loop/orchestrator"
 import type { EvalConfig, JudgeProviderConfig, LoopState, ScenarioCategory, Difficulty } from "../types"
 import { DEFAULT_BLOCKED_TOOLS } from "../types"
-import { loadScenarios } from "../scenario/loader"
+import { loadScenarios, loadPaddockConfig } from "../scenario/loader"
 import { resolve } from "path"
 
 // Active orchestrator instance (one at a time)
@@ -136,21 +136,25 @@ async function handleEvalRun(args: Record<string, unknown>): Promise<string> {
     return JSON.stringify({ error: "No API keys configured. Set CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY." })
   }
 
+  // Load .paddock/config.json as defaults — MCP args override
+  const fileConfig = loadPaddockConfig(repoRoot)
+
   const config: EvalConfig = {
     repoRoot,
     agentDir,
-    categories: args.categories as ScenarioCategory[] | undefined,
-    difficulties: args.difficulties as Difficulty[] | undefined,
-    scenarioCount: (args.scenarioCount as number) ?? 10,
-    passThreshold: (args.passThreshold as number) ?? 0.8,
+    categories: (args.categories as ScenarioCategory[] | undefined) ?? (fileConfig.categories as ScenarioCategory[] | undefined),
+    difficulties: (args.difficulties as Difficulty[] | undefined) ?? (fileConfig.difficulties as Difficulty[] | undefined),
+    scenarioCount: (args.scenarioCount as number) ?? (typeof fileConfig.scenarioCount === "number" ? fileConfig.scenarioCount : 10),
+    passThreshold: (args.passThreshold as number) ?? (typeof fileConfig.passThreshold === "number" ? fileConfig.passThreshold : 0.8),
     judges,
     autoImprove: (args.autoImprove as boolean) ?? true,
-    maxIterations: (args.maxIterations as number) ?? 5,
-    maxTimeMs: 30 * 60 * 1000,
-    maxLlmCalls: 100,
+    maxIterations: (args.maxIterations as number) ?? (typeof fileConfig.maxIterations === "number" ? fileConfig.maxIterations : 5),
+    maxTimeMs: (typeof fileConfig.maxTimeMs === "number" ? fileConfig.maxTimeMs : 30 * 60 * 1000),
+    maxLlmCalls: (typeof fileConfig.maxLlmCalls === "number" ? fileConfig.maxLlmCalls : 100),
     autoPush: (args.autoPush as boolean) ?? true,
-    branchPrefix: "eval",
-    blockedTools: DEFAULT_BLOCKED_TOOLS,
+    useBranch: (args.useBranch as boolean) ?? false,
+    branchPrefix: "paddock",
+    blockedTools: (Array.isArray(fileConfig.blockedTools) ? fileConfig.blockedTools as string[] : DEFAULT_BLOCKED_TOOLS),
   }
 
   activeOrchestrator = new EvalOrchestrator(config)
