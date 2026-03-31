@@ -51,7 +51,7 @@ ${bold("Options for 'run':")}
   --count          Number of scenarios (default: 10)
   --threshold      Pass rate 0-1 (default: 0.8)
   --max-iter       Max improvement iterations (default: 5)
-  --no-improve     Evaluate only, don't improve
+  --improve        Enable auto-improve loop on failures (default: off)
   --no-push        Don't push to git
   --no-generate    Use only built-in templates, skip LLM generation
   --branch         Create separate git branch and commit (default: off, stays on current branch)
@@ -134,7 +134,7 @@ async function cmdRun(args: string[]) {
       count: { type: "string", default: "10" },
       threshold: { type: "string", default: "0.8" },
       "max-iter": { type: "string", default: "5" },
-      "no-improve": { type: "boolean", default: false },
+      "improve": { type: "boolean", default: false },
       "no-push": { type: "boolean", default: false },
       "no-generate": { type: "boolean", default: false },
       branch: { type: "boolean", default: false },
@@ -190,7 +190,7 @@ async function cmdRun(args: string[]) {
     scenarioCount,
     passThreshold,
     judges: judgeConfigs,
-    autoImprove: !values["no-improve"],
+    autoImprove: !!values["improve"],
     maxIterations,
     maxTimeMs: (typeof fileConfig.maxTimeMs === "number" ? fileConfig.maxTimeMs : 30 * 60 * 1000),
     maxLlmCalls: (typeof fileConfig.maxLlmCalls === "number" ? fileConfig.maxLlmCalls : 100),
