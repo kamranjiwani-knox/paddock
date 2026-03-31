@@ -73,6 +73,13 @@ Score EACH dimension listed in success criteria from 0 to 10:
 - 7-8: Good with minor issues
 - 9-10: Excellent
 
+IMPORTANT — Verdict MUST be consistent with your scores:
+- If ALL scored dimensions are >= 8 → VERDICT: pass
+- If ANY scored dimension is < 5 → VERDICT: fail
+- Otherwise (scores between 5-8 with some issues) → VERDICT: partial
+Do NOT say "fail" when all your scores are 8+. Do NOT say "pass" when any score is below 5.
+Only override this rule when there is a critical behavioral violation (e.g. zero response, security breach, data leak).
+
 Output EXACTLY this format (no other text before or after):
 
 SCORE[correctness]: <0-10>
