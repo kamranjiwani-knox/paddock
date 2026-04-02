@@ -122,7 +122,7 @@ export class ConsensusEngine {
   }
 
   private majorityVote(verdicts: Verdict[]): Verdict {
-    const counts: Record<Verdict, number> = { pass: 0, fail: 0, partial: 0 }
+    const counts: Record<Verdict, number> = { pass: 0, fail: 0, partial: 0, skipped: 0 }
     for (const v of verdicts) counts[v]++
     return (Object.entries(counts) as [Verdict, number][])
       .sort((a, b) => b[1] - a[1])[0][0]

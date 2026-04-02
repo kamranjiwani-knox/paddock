@@ -106,7 +106,7 @@ export interface JudgeScore {
   raw: string
 }
 
-export type Verdict = "pass" | "fail" | "partial"
+export type Verdict = "pass" | "fail" | "partial" | "skipped"
 
 export interface ConsensusResult {
   scenarioId: string
@@ -119,9 +119,16 @@ export interface ConsensusResult {
   improvementSuggestions: string[]
 }
 
+export interface TokenUsage {
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+}
+
 export interface JudgeProvider {
   name: string
   model: string
+  usage: TokenUsage
   complete(prompt: string): Promise<string>
 }
 
@@ -182,6 +189,7 @@ export interface LoopState {
   budget: Budget
   passRate: number
   previousPassRate?: number
+  tokenUsage: Record<string, TokenUsage>
   startedAt: number
   updatedAt: number
   error?: string
@@ -203,6 +211,7 @@ export interface EvalConfig {
   agentDir: string
   categories?: ScenarioCategory[]
   difficulties?: Difficulty[]
+  scenarioIds?: string[]
   scenarioCount: number
   passThreshold: number
   judges: JudgeProviderConfig[]
@@ -214,6 +223,7 @@ export interface EvalConfig {
   useBranch: boolean         // create separate git branch for eval (default: false)
   branchPrefix: string
   blockedTools: string[]
+  fullRun: boolean             // skip rerun logic, eval all scenarios fresh
 }
 
 export interface JudgeProviderConfig {
@@ -233,6 +243,18 @@ export const DEFAULT_BLOCKED_TOOLS = [
   "tts",
 ]
 
+export interface LastReportData {
+  timestamp: string
+  passRate: number
+  results: Array<{
+    id: string
+    verdict: Verdict
+    score: number
+    agreement: number
+  }>
+  allScenarioIds: string[]
+}
+
 export const DEFAULT_EVAL_CONFIG: Omit<EvalConfig, "repoRoot" | "agentDir" | "judges"> = {
   scenarioCount: 10,
   passThreshold: 0.8,
@@ -244,4 +266,5 @@ export const DEFAULT_EVAL_CONFIG: Omit<EvalConfig, "repoRoot" | "agentDir" | "ju
   useBranch: false,
   branchPrefix: "paddock",
   blockedTools: DEFAULT_BLOCKED_TOOLS,
+  fullRun: false,
 }

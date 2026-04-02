@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk"
-import type { JudgeProvider } from "../../types"
+import type { JudgeProvider, TokenUsage } from "../../types"
 
 /**
  * Claude judge provider.
@@ -10,6 +10,7 @@ import type { JudgeProvider } from "../../types"
 export class ClaudeJudgeProvider implements JudgeProvider {
   name = "claude"
   model: string
+  usage: TokenUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
   private tokens: string[]
   private tokenIndex = 0
 
@@ -56,6 +57,11 @@ export class ClaudeJudgeProvider implements JudgeProvider {
           max_tokens: 8096,
           messages: [{ role: "user", content: prompt }],
         })
+        if (response.usage) {
+          this.usage.inputTokens += response.usage.input_tokens
+          this.usage.outputTokens += response.usage.output_tokens
+          this.usage.totalTokens += response.usage.input_tokens + response.usage.output_tokens
+        }
         this.rotateToken()
         return response.content
           .filter((b): b is Anthropic.TextBlock => b.type === "text")

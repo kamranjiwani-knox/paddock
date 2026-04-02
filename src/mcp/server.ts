@@ -48,6 +48,7 @@ export const TOOL_DEFINITIONS = [
         passThreshold: { type: "number", description: "Pass rate threshold 0-1 (default: 0.8)" },
         autoImprove: { type: "boolean", description: "Auto-improve on failures (default: true)" },
         autoPush: { type: "boolean", description: "Push to git on success (default: true)" },
+        fullRun: { type: "boolean", description: "Run all scenarios fresh, ignore last report (default: false — rerun failed/partial/new only)" },
       },
       required: ["repoRoot"],
     },
@@ -155,6 +156,7 @@ async function handleEvalRun(args: Record<string, unknown>): Promise<string> {
     useBranch: (args.useBranch as boolean) ?? false,
     branchPrefix: "paddock",
     blockedTools: (Array.isArray(fileConfig.blockedTools) ? fileConfig.blockedTools as string[] : DEFAULT_BLOCKED_TOOLS),
+    fullRun: (args.fullRun as boolean) ?? false,
   }
 
   activeOrchestrator = new EvalOrchestrator(config)
@@ -228,8 +230,11 @@ function handleEvalReport(args: Record<string, unknown>): string {
     lines.push(`## Scenario Results`)
     lines.push(``)
     for (const e of state.evaluations) {
-      const icon = e.finalVerdict === "pass" ? "PASS" : e.finalVerdict === "partial" ? "PARTIAL" : "FAIL"
-      lines.push(`- [${icon}] ${e.scenarioId} — score: ${e.finalScore.toFixed(1)}/10, agreement: ${(e.agreement * 100).toFixed(0)}%`)
+      const icon = e.finalVerdict === "pass" ? "PASS" : e.finalVerdict === "partial" ? "PARTIAL" : e.finalVerdict === "skipped" ? "SKIPPED" : "FAIL"
+      const detail = e.finalVerdict === "skipped"
+        ? `- [${icon}] ${e.scenarioId} — last score: ${e.finalScore.toFixed(1)}/10`
+        : `- [${icon}] ${e.scenarioId} — score: ${e.finalScore.toFixed(1)}/10, agreement: ${(e.agreement * 100).toFixed(0)}%`
+      lines.push(detail)
       if (format === "detailed" && e.failureReasons.length > 0) {
         for (const r of e.failureReasons.slice(0, 3)) {
           lines.push(`  - ${typeof r === "string" ? r.slice(0, 120) : JSON.stringify(r).slice(0, 120)}`)

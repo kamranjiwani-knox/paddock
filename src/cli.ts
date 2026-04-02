@@ -13,6 +13,8 @@ import { BranchManager } from "./git/branch-manager"
 import { BudgetTracker } from "./loop/budget"
 import { EvalOrchestrator } from "./loop/orchestrator"
 import { ScenarioGenerator } from "./scenario/generator"
+import { saveReport } from "./report/writer"
+import { formatTokenUsage } from "./report/formatter"
 import type { EvalConfig, JudgeProviderConfig, ScenarioCategory, Difficulty } from "./types"
 import { DEFAULT_BLOCKED_TOOLS } from "./types"
 
@@ -48,10 +50,12 @@ ${bold("Options for 'run':")}
   --agent-dir      Path to .agent directory
   --categories     Comma-separated: tool_use,memory,conversation,edge_case,...
   --difficulties   Comma-separated: easy,medium,hard,adversarial
+  --scenarios      Comma-separated scenario IDs to run (e.g. error-tool-error-loop,memory-recall)
   --count          Number of scenarios (default: 10)
   --threshold      Pass rate 0-1 (default: 0.8)
   --max-iter       Max improvement iterations (default: 5)
   --improve        Enable auto-improve loop on failures (default: off)
+  --full           Run all scenarios fresh, ignore last report (default: rerun failed/partial/new only)
   --no-push        Don't push to git
   --no-generate    Use only built-in templates, skip LLM generation
   --branch         Create separate git branch and commit (default: off, stays on current branch)
@@ -131,10 +135,12 @@ async function cmdRun(args: string[]) {
       "agent-dir": { type: "string" },
       categories: { type: "string" },
       difficulties: { type: "string" },
+      scenarios: { type: "string" },
       count: { type: "string", default: "10" },
       threshold: { type: "string", default: "0.8" },
       "max-iter": { type: "string", default: "5" },
       "improve": { type: "boolean", default: false },
+      "full": { type: "boolean", default: false },
       "no-push": { type: "boolean", default: false },
       "no-generate": { type: "boolean", default: false },
       branch: { type: "boolean", default: false },
@@ -187,6 +193,7 @@ async function cmdRun(args: string[]) {
     agentDir,
     categories,
     difficulties,
+    scenarioIds: typeof values.scenarios === "string" ? values.scenarios.split(",") : undefined,
     scenarioCount,
     passThreshold,
     judges: judgeConfigs,
@@ -198,6 +205,7 @@ async function cmdRun(args: string[]) {
     useBranch: !!values.branch,
     branchPrefix: "paddock",
     blockedTools: (Array.isArray(fileConfig.blockedTools) ? fileConfig.blockedTools as string[] : DEFAULT_BLOCKED_TOOLS),
+    fullRun: !!values["full"],
   }
 
   console.log(`  ${dim("Repo:")}       ${repoRoot}`)
@@ -207,6 +215,7 @@ async function cmdRun(args: string[]) {
   console.log(`  ${dim("Scenarios:")}  ${config.scenarioCount}`)
   console.log(`  ${dim("Threshold:")}  ${(config.passThreshold * 100).toFixed(0)}%`)
   console.log(`  ${dim("Improve:")}    ${config.autoImprove ? "yes" : "no"}`)
+  console.log(`  ${dim("Mode:")}       ${config.fullRun ? "full (all scenarios)" : "rerun (failed/partial/new only)"}`)
   console.log(`  ${dim("Branch:")}     ${config.useBranch ? "yes (separate branch)" : "no (current branch)"}`)
   console.log()
 
@@ -222,6 +231,20 @@ async function cmdRun(args: string[]) {
   console.log(`  ${dim("Iterations:")} ${state.iteration}`)
   console.log(`  ${dim("Branch:")}    ${state.branchName}`)
 
+  // Token usage per judge
+  const { lines: usageLines, grandTotal } = formatTokenUsage(state.tokenUsage)
+  if (usageLines.length > 0) {
+    console.log()
+    console.log(bold("  Token Usage"))
+    console.log()
+    for (const u of usageLines) {
+      console.log(`  ${dim(u.provider + ":")} ${u.input} in / ${u.output} out (${u.total} total)`)
+    }
+    if (grandTotal) {
+      console.log(`  ${dim(grandTotal.provider + ":")} ${grandTotal.input} in / ${grandTotal.output} out (${grandTotal.total} total)`)
+    }
+  }
+
   if (state.error) {
     console.log(`  ${red("Error:")}     ${state.error}`)
   }
@@ -234,8 +257,12 @@ async function cmdRun(args: string[]) {
     for (const eval_ of state.evaluations) {
       const icon = eval_.finalVerdict === "pass" ? green("PASS")
         : eval_.finalVerdict === "partial" ? yellow("PARTIAL")
+        : eval_.finalVerdict === "skipped" ? dim("SKIPPED")
         : red("FAIL")
-      console.log(`  ${icon} ${eval_.scenarioId} — score: ${eval_.finalScore.toFixed(1)}/10 — agreement: ${(eval_.agreement * 100).toFixed(0)}%`)
+      const detail = eval_.finalVerdict === "skipped"
+        ? `${eval_.scenarioId} — last score: ${eval_.finalScore.toFixed(1)}/10`
+        : `${eval_.scenarioId} — score: ${eval_.finalScore.toFixed(1)}/10 — agreement: ${(eval_.agreement * 100).toFixed(0)}%`
+      console.log(`  ${icon} ${detail}`)
       if (eval_.failureReasons.length > 0) {
         for (const reason of eval_.failureReasons.slice(0, 2)) {
           console.log(`       ${dim(typeof reason === "string" ? reason.slice(0, 100) : JSON.stringify(reason).slice(0, 100))}`)
@@ -329,6 +356,12 @@ async function cmdRun(args: string[]) {
         console.log()
       }
     }
+  }
+
+  // Save report to .paddock/reports/
+  if (state.evaluations.length > 0) {
+    const { mdPath } = saveReport(repoRoot, state)
+    console.log(`  ${dim("Report:")} ${mdPath}`)
   }
 
   console.log()

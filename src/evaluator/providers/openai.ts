@@ -1,8 +1,9 @@
-import type { JudgeProvider } from "../../types"
+import type { JudgeProvider, TokenUsage } from "../../types"
 
 export class OpenAIJudgeProvider implements JudgeProvider {
   name = "openai"
   model: string
+  usage: TokenUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
   private apiKey: string
 
   constructor(apiKey: string, model = "gpt-4o") {
@@ -30,6 +31,12 @@ export class OpenAIJudgeProvider implements JudgeProvider {
 
     const data = await res.json() as {
       choices?: Array<{ message?: { content?: string } }>
+      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
+    }
+    if (data.usage) {
+      this.usage.inputTokens += data.usage.prompt_tokens ?? 0
+      this.usage.outputTokens += data.usage.completion_tokens ?? 0
+      this.usage.totalTokens += data.usage.total_tokens ?? 0
     }
     return data.choices?.[0]?.message?.content ?? ""
   }

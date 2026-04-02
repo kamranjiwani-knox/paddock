@@ -1,8 +1,9 @@
-import type { JudgeProvider } from "../../types"
+import type { JudgeProvider, TokenUsage } from "../../types"
 
 export class GeminiJudgeProvider implements JudgeProvider {
   name = "gemini"
   model: string
+  usage: TokenUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
   private apiKey: string
 
   constructor(apiKey: string, model = "gemini-2.5-pro") {
@@ -27,6 +28,12 @@ export class GeminiJudgeProvider implements JudgeProvider {
 
     const data = await res.json() as {
       candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
+      usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number }
+    }
+    if (data.usageMetadata) {
+      this.usage.inputTokens += data.usageMetadata.promptTokenCount ?? 0
+      this.usage.outputTokens += data.usageMetadata.candidatesTokenCount ?? 0
+      this.usage.totalTokens += data.usageMetadata.totalTokenCount ?? 0
     }
     return data.candidates?.[0]?.content?.parts?.[0]?.text ?? ""
   }

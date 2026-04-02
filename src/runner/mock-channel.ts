@@ -82,9 +82,13 @@ export class MockChannel implements IChannelGateway {
 
     while (Date.now() < deadline) {
       try {
-        const remaining = Math.min(quietMs, deadline - Date.now())
-        if (remaining <= 0) break
-        const msg = await this.waitForResponse(remaining)
+        // First response: wait up to full remaining time (LLM may take a while)
+        // Subsequent responses: wait only quietMs (silence = done)
+        const timeout = responses.length === 0
+          ? Math.max(0, deadline - Date.now())
+          : Math.min(quietMs, deadline - Date.now())
+        if (timeout <= 0) break
+        const msg = await this.waitForResponse(timeout)
         responses.push(msg.text)
       } catch {
         break

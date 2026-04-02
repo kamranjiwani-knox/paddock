@@ -15,6 +15,8 @@ function parseYaml(content: string): Record<string, unknown> {
   let currentKey = ""
   let currentArray: unknown[] | null = null
   let currentArrayItemObj: Record<string, unknown> | null = null
+  let currentNestedObj: Record<string, unknown> | null = null
+  let currentNestedKey = ""
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
@@ -23,12 +25,22 @@ function parseYaml(content: string): Record<string, unknown> {
     // Skip empty lines and comments
     if (!trimmed || trimmed.startsWith("#")) continue
 
+    // Nested object property (2-space indent): "  key: value" under a top-level key
+    const nestedMatch = trimmed.match(/^(\s{2,4})(\S[\w.\-]*):\s*(.*)$/)
+    if (nestedMatch && currentNestedObj && !currentArray) {
+      const [, , key, value] = nestedMatch
+      currentNestedObj[key] = parseValue(value)
+      currentArrayItemObj = null
+      continue
+    }
+
     // Array item with object properties: "  - key: value"
     const arrayItemMatch = trimmed.match(/^(\s+)-\s+(\w+):\s*(.*)$/)
     if (arrayItemMatch && currentArray) {
       const [, , key, value] = arrayItemMatch
       currentArrayItemObj = { [key]: parseValue(value) }
       currentArray.push(currentArrayItemObj)
+      currentNestedObj = null
       continue
     }
 
@@ -53,6 +65,7 @@ function parseYaml(content: string): Record<string, unknown> {
     if (keyValueMatch) {
       const [, key, value] = keyValueMatch
       currentArrayItemObj = null
+      currentNestedObj = null
 
       if (value === "" || value === undefined) {
         // Could be start of array or nested object — peek next line
@@ -61,6 +74,12 @@ function parseYaml(content: string): Record<string, unknown> {
           currentArray = []
           result[key] = currentArray
           currentKey = key
+        } else if (nextLine && nextLine.match(/^\s{2,4}\S/)) {
+          // Nested object (indented key-value pairs)
+          currentNestedObj = {}
+          result[key] = currentNestedObj
+          currentNestedKey = key
+          currentArray = null
         } else {
           result[key] = ""
           currentArray = null
@@ -71,6 +90,51 @@ function parseYaml(content: string): Record<string, unknown> {
         currentKey = key
       }
       continue
+    }
+  }
+
+  // Special handling for 'setup' block with nested files/env/tools
+  // The generic parser can't handle 3-level nesting, so parse it manually
+  const setupIdx = lines.findIndex(l => /^setup:\s*$/.test(l.trimEnd()))
+  if (setupIdx >= 0) {
+    const setup: Record<string, Record<string, string> | string[]> = {}
+    let currentSection: Record<string, string> | string[] | null = null
+    let sectionKey = ""
+
+    for (let j = setupIdx + 1; j < lines.length; j++) {
+      const sl = lines[j]
+      // Stop at next top-level key (no indent)
+      if (sl.match(/^\S/) && sl.trim()) break
+      // 2-space indent: section header (files:, env:, tools:)
+      const sectionMatch = sl.match(/^\s{2}(\w+):\s*$/)
+      if (sectionMatch) {
+        sectionKey = sectionMatch[1]
+        if (sectionKey === "tools") {
+          currentSection = []
+          setup[sectionKey] = currentSection
+        } else {
+          currentSection = {}
+          setup[sectionKey] = currentSection
+        }
+        continue
+      }
+      // 4-space indent: key-value pair or array item
+      if (currentSection) {
+        const kvMatch = sl.match(/^\s{4,}(\S[\w.\-]*):\s*(.+)$/)
+        if (kvMatch && !Array.isArray(currentSection)) {
+          currentSection[kvMatch[1]] = String(parseValue(kvMatch[2]))
+          continue
+        }
+        const arrMatch = sl.match(/^\s{4,}-\s+(.+)$/)
+        if (arrMatch && Array.isArray(currentSection)) {
+          currentSection.push(String(parseValue(arrMatch[1])))
+          continue
+        }
+      }
+    }
+
+    if (Object.keys(setup).length > 0) {
+      result.setup = setup
     }
   }
 
@@ -94,6 +158,32 @@ function parseValue(value: string): string | number | boolean {
   if (/^\d+(\.\d+)?$/.test(trimmed)) return parseFloat(trimmed)
 
   return trimmed
+}
+
+/**
+ * Parse setup block from YAML data.
+ * Supports: setup.files (Record<string,string>), setup.env (Record<string,string>), setup.tools (string[])
+ */
+function parseSetup(raw: Record<string, unknown>): Scenario["setup"] {
+  const setup: NonNullable<Scenario["setup"]> = {}
+  if (raw.files && typeof raw.files === "object") {
+    const files: Record<string, string> = {}
+    for (const [k, v] of Object.entries(raw.files as Record<string, unknown>)) {
+      files[k] = String(v)
+    }
+    setup.files = files
+  }
+  if (raw.env && typeof raw.env === "object") {
+    const env: Record<string, string> = {}
+    for (const [k, v] of Object.entries(raw.env as Record<string, unknown>)) {
+      env[k] = String(v)
+    }
+    setup.env = env
+  }
+  if (Array.isArray(raw.tools)) {
+    setup.tools = raw.tools.map(String)
+  }
+  return Object.keys(setup).length > 0 ? setup : undefined
 }
 
 /**
@@ -123,6 +213,7 @@ function loadScenarioFile(filePath: string): Scenario | null {
         description: String(c.description ?? ""),
         weight: Number(c.weight ?? 0.5),
       })),
+      setup: data.setup ? parseSetup(data.setup as Record<string, unknown>) : undefined,
     }
   } catch (err) {
     console.warn(`[loader] Failed to load scenario ${filePath}: ${err}`)

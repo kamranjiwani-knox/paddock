@@ -3,6 +3,7 @@ import type {
   LoopState,
   ConsensusResult,
   Scenario,
+  LastReportData,
 } from "../types"
 import { AgentRunner } from "../runner/agent-runner"
 import { loadScenarios } from "../scenario/loader"
@@ -15,6 +16,7 @@ import { Patcher } from "../improver/patcher"
 import { Sandbox } from "../improver/sandbox"
 import { BranchManager } from "../git/branch-manager"
 import { BudgetTracker } from "./budget"
+import { loadLastReport } from "../report/writer"
 import { readFileSync, existsSync } from "fs"
 import { join } from "path"
 
@@ -44,6 +46,7 @@ export class EvalOrchestrator {
         currentLlmCalls: 0,
       },
       passRate: 0,
+      tokenUsage: {},
       startedAt: Date.now(),
       updatedAt: Date.now(),
     }
@@ -99,31 +102,85 @@ export class EvalOrchestrator {
       this.updatePhase("generating_scenarios")
       let scenarios = this.selectTemplateScenarios()
 
-      // If we need more, generate with LLM
-      if (scenarios.length < config.scenarioCount && judgeProviders.length > 0) {
-        try {
-          const soulMd = this.readSoulMd()
-          const generator = new ScenarioGenerator({
-            provider: judgeProviders[0],
-            soulMd,
-            toolNames: [], // will be filled by runner
-            skills: [],
-          })
-          const generated = await generator.generateSuite({
-            categories: config.categories,
-            difficulties: config.difficulties,
-            count: config.scenarioCount - scenarios.length,
-          })
-          budget.recordLlmCall()
-          scenarios = [...scenarios, ...generated]
-        } catch (err) {
-          console.warn(`[orchestrator] LLM scenario generation failed, using templates only: ${err}`)
+      // If specific scenario IDs requested, skip generation and count limit
+      if (!config.scenarioIds) {
+        // If we need more, generate with LLM
+        if (scenarios.length < config.scenarioCount && judgeProviders.length > 0) {
+          try {
+            const soulMd = this.readSoulMd()
+            const generator = new ScenarioGenerator({
+              provider: judgeProviders[0],
+              soulMd,
+              toolNames: [], // will be filled by runner
+              skills: [],
+            })
+            const generated = await generator.generateSuite({
+              categories: config.categories,
+              difficulties: config.difficulties,
+              count: config.scenarioCount - scenarios.length,
+            })
+            budget.recordLlmCall()
+            scenarios = [...scenarios, ...generated]
+          } catch (err) {
+            console.warn(`[orchestrator] LLM scenario generation failed, using templates only: ${err}`)
+          }
         }
-      }
 
-      scenarios = scenarios.slice(0, config.scenarioCount)
+        scenarios = scenarios.slice(0, config.scenarioCount)
+      }
       this.state.scenarios = scenarios
       console.log(`[orchestrator] ${scenarios.length} scenarios ready`)
+
+      // ─── 2b. RERUN LOGIC: determine which scenarios to skip ──
+      let skippedEvaluations: ConsensusResult[] = []
+
+      if (!config.fullRun) {
+        const lastReport = loadLastReport(config.repoRoot)
+        if (lastReport && lastReport.results.length > 0) {
+          const lastResultMap = new Map(lastReport.results.map(r => [r.id, r]))
+          const lastKnownIds = new Set([
+            ...lastReport.results.map(r => r.id),
+            ...lastReport.allScenarioIds,
+          ])
+
+          const toSkipIds = new Set<string>()
+          for (const s of scenarios) {
+            const prev = lastResultMap.get(s.id)
+            // Skip if it passed (or was already skipped) last time AND it was a known scenario (not new)
+            if (prev && (prev.verdict === "pass" || prev.verdict === "skipped") && lastKnownIds.has(s.id)) {
+              toSkipIds.add(s.id)
+            }
+          }
+
+          if (toSkipIds.size > 0) {
+            // Build skipped evaluations — carry forward from last report with "skipped" verdict
+            for (const id of toSkipIds) {
+              const prev = lastResultMap.get(id)!
+              skippedEvaluations.push({
+                scenarioId: id,
+                judges: [],
+                finalVerdict: "skipped",
+                finalScore: prev.score,
+                agreement: prev.agreement,
+                dimensionScores: {},
+                failureReasons: [],
+                improvementSuggestions: [],
+              })
+            }
+
+            // Filter down to only scenarios that need re-eval
+            const newOrFailedCount = scenarios.length - toSkipIds.size
+            scenarios = scenarios.filter(s => !toSkipIds.has(s.id))
+            this.state.scenarios = [...scenarios, ...this.state.scenarios.filter(s => toSkipIds.has(s.id))]
+
+            console.log(`[orchestrator] rerun mode: ${toSkipIds.size} passed (skipped), ${scenarios.length} to eval (fail/partial/new)`)
+          } else {
+            console.log(`[orchestrator] rerun mode: no passing scenarios to skip, running all`)
+          }
+        } else {
+          console.log(`[orchestrator] no previous report found, running full eval`)
+        }
+      }
 
       // ─── 3. MAIN LOOP ─────────────────────────────────────
       while (!budget.isExhausted() && !this.aborted) {
@@ -170,18 +227,19 @@ export class EvalOrchestrator {
           }
         }
 
-        // Merge with previous passing evaluations
+        // Merge with previous passing evaluations (from improve loop iterations)
         const previousPassing = this.state.evaluations
           .filter(e => e.finalVerdict === "pass")
           .filter(e => !evaluations.some(ne => ne.scenarioId === e.scenarioId))
-        this.state.evaluations = [...previousPassing, ...evaluations]
+        // Combine: skipped (carried from last report) + previous passing + fresh evaluations
+        this.state.evaluations = [...skippedEvaluations, ...previousPassing, ...evaluations]
 
-        // 3c. CALCULATE PASS RATE
-        const totalEvals = this.state.evaluations
-        const passCount = totalEvals.filter(e => e.finalVerdict === "pass").length
-        this.state.passRate = totalEvals.length > 0 ? passCount / totalEvals.length : 0
+        // 3c. CALCULATE PASS RATE (skipped scenarios excluded from denominator)
+        const activeEvals = this.state.evaluations.filter(e => e.finalVerdict !== "skipped")
+        const passCount = activeEvals.filter(e => e.finalVerdict === "pass").length
+        this.state.passRate = activeEvals.length > 0 ? passCount / activeEvals.length : 0
 
-        console.log(`[orchestrator] pass rate: ${(this.state.passRate * 100).toFixed(0)}% (${passCount}/${totalEvals.length}) | ${budget.formatStatus()}`)
+        console.log(`[orchestrator] pass rate: ${(this.state.passRate * 100).toFixed(0)}% (${passCount}/${activeEvals.length}) | ${budget.formatStatus()}`)
 
         // 3d. DECISION GATE
         if (this.state.passRate >= config.passThreshold) {
@@ -268,6 +326,12 @@ export class EvalOrchestrator {
         this.updatePhase("failed")
       }
 
+      // Collect token usage from judge providers
+      for (const jp of judgeProviders) {
+        const key = `${jp.name}/${jp.model}`
+        this.state.tokenUsage[key] = { ...jp.usage }
+      }
+
       if (config.useBranch) {
         await git.restoreOriginalBranch()
       }
@@ -295,6 +359,9 @@ export class EvalOrchestrator {
   private selectTemplateScenarios(): Scenario[] {
     let templates = loadScenarios(this.config.repoRoot)
 
+    if (this.config.scenarioIds) {
+      templates = templates.filter(s => this.config.scenarioIds!.includes(s.id))
+    }
     if (this.config.categories) {
       templates = templates.filter(s => this.config.categories!.includes(s.category))
     }

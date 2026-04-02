@@ -10,7 +10,7 @@ export function buildJudgePrompt(
     .join("\n")
 
   const formattedResponses = trace.responses.length > 0
-    ? trace.responses.map((r, i) => `  ${i + 1}. "${r.text.slice(0, 500)}${r.text.length > 500 ? "..." : ""}"`).join("\n")
+    ? trace.responses.map((r, i) => `  ${i + 1}. "${r.text.slice(0, 12000)}${r.text.length > 12000 ? `\n  [... truncated, full length: ${r.text.length} chars]` : ""}"`).join("\n")
     : "  (no responses captured)"
 
   const formattedToolCalls = trace.toolCalls.length > 0

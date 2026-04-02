@@ -116,7 +116,7 @@ export class AgentRunner {
       repoRoot: resolve(config.repoRoot),
       agentDir: config.agentDir ?? join(config.repoRoot, ".agent"),
       blockedTools: config.blockedTools ?? DEFAULT_BLOCKED_TOOLS,
-      responseTimeoutMs: config.responseTimeoutMs ?? 120_000,
+      responseTimeoutMs: config.responseTimeoutMs ?? 180_000,
       quietMs: config.quietMs ?? 15_000,
       maxRetries: config.maxRetries ?? 2,
       retryDelayMs: config.retryDelayMs ?? 5_000,
@@ -173,11 +173,21 @@ export class AgentRunner {
     try {
       // Copy .agent to temp and ensure required subdirs exist
       cpSync(this.config.agentDir, tempDir, { recursive: true })
-      for (const sub of ["data", "data/sessions", "sessions", "memory", "skills"]) {
+      for (const sub of ["data", "data/sessions", "data/secrets", "sessions", "memory", "skills", "workspace"]) {
         mkdirSync(join(tempDir, sub), { recursive: true })
       }
 
-      // Force open access for eval user
+      // Apply scenario setup files (before access override so they can set config)
+      if (scenario.setup?.files) {
+        for (const [path, content] of Object.entries(scenario.setup.files)) {
+          const fullPath = join(tempDir, path)
+          const dir = fullPath.substring(0, fullPath.lastIndexOf("/"))
+          mkdirSync(dir, { recursive: true })
+          Bun.write(fullPath, content)
+        }
+      }
+
+      // Force open access for eval user (always last — overrides any setup config)
       const configPath = join(tempDir, "agent.config.json")
       try {
         const agentConfig = existsSync(configPath)
@@ -187,16 +197,6 @@ export class AgentRunner {
         Bun.write(configPath, JSON.stringify(agentConfig, null, 2))
       } catch {
         Bun.write(configPath, JSON.stringify({ accessStrategy: "open" }, null, 2))
-      }
-
-      // Apply scenario setup files
-      if (scenario.setup?.files) {
-        for (const [path, content] of Object.entries(scenario.setup.files)) {
-          const fullPath = join(tempDir, path)
-          const dir = fullPath.substring(0, fullPath.lastIndexOf("/"))
-          mkdirSync(dir, { recursive: true })
-          Bun.write(fullPath, content)
-        }
       }
 
       // Read SOUL.md and config snapshots
