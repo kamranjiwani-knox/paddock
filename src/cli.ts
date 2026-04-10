@@ -59,19 +59,23 @@ ${bold("Options for 'run':")}
   --no-push        Don't push to git
   --no-generate    Use only built-in templates, skip LLM generation
   --branch         Create separate git branch and commit (default: off, stays on current branch)
+  --concurrency N  Max concurrent scenarios (default: 1 = sequential)
 
 ${bold("Options for 'scenarios':")}
   --categories     Comma-separated categories
   --count          Number to generate (default: 5)
 
 ${bold("Environment:")}
-  CLAUDE_CODE_OAUTH_TOKEN  Claude tokens, comma-separated for rotation (preferred)
-  ANTHROPIC_API_KEY        Claude API key (fallback)
-  GEMINI_API_KEY      Gemini judge (optional)
-  OPENAI_API_KEY      GPT judge (optional)
-  EVAL_REPO_ROOT      Override repo root
-  EVAL_AGENT_DIR      Override .agent dir
-  EVAL_LLM_MODEL      Agent LLM model (default: claude-sonnet-4-6)
+  CLAUDE_CODE_OAUTH_TOKEN      Claude tokens, comma-separated for rotation (preferred)
+  ANTHROPIC_API_KEY            Claude API key (fallback)
+  GEMINI_API_KEY               Gemini judge (optional)
+  OPENAI_API_KEY               GPT judge (optional)
+  EVAL_REPO_ROOT               Override repo root
+  EVAL_AGENT_DIR               Override .agent dir
+  EVAL_LLM_MODEL               Agent LLM model (default: claude-sonnet-4-6)
+  EVAL_CLAUDE_JUDGE_MODEL      Claude judge model (default: claude-sonnet-4-6)
+  EVAL_GEMINI_JUDGE_MODEL      Gemini judge model (default: gemini-2.5-pro)
+  EVAL_OPENAI_JUDGE_MODEL      OpenAI judge model (default: gpt-4o)
 `)
 }
 
@@ -97,27 +101,30 @@ function buildJudgeConfigs(): JudgeProviderConfig[] {
   const configs: JudgeProviderConfig[] = []
 
   // Prefer CLAUDE_CODE_OAUTH_TOKEN (supports comma-separated token rotation)
+  // Model override: EVAL_CLAUDE_JUDGE_MODEL (default: claude-sonnet-4-6)
   const claudeKey = process.env.CLAUDE_CODE_OAUTH_TOKEN ?? process.env.ANTHROPIC_API_KEY
   if (claudeKey) {
     configs.push({
       type: "claude",
-      model: "claude-sonnet-4-6",
+      model: process.env.EVAL_CLAUDE_JUDGE_MODEL ?? "claude-sonnet-4-6",
       apiKey: claudeKey,
     })
   }
 
+  // Model override: EVAL_GEMINI_JUDGE_MODEL (default: gemini-2.5-pro)
   if (process.env.GEMINI_API_KEY) {
     configs.push({
       type: "gemini",
-      model: "gemini-2.5-pro",
+      model: process.env.EVAL_GEMINI_JUDGE_MODEL ?? "gemini-2.5-pro",
       apiKey: process.env.GEMINI_API_KEY,
     })
   }
 
+  // Model override: EVAL_OPENAI_JUDGE_MODEL (default: gpt-4o)
   if (process.env.OPENAI_API_KEY) {
     configs.push({
       type: "openai",
-      model: "gpt-4o",
+      model: process.env.EVAL_OPENAI_JUDGE_MODEL ?? "gpt-4o",
       apiKey: process.env.OPENAI_API_KEY,
     })
   }
@@ -144,6 +151,7 @@ async function cmdRun(args: string[]) {
       "no-push": { type: "boolean", default: false },
       "no-generate": { type: "boolean", default: false },
       branch: { type: "boolean", default: false },
+      concurrency: { type: "string", default: "1" },
     },
     strict: false,
   })
@@ -206,17 +214,21 @@ async function cmdRun(args: string[]) {
     branchPrefix: "paddock",
     blockedTools: (Array.isArray(fileConfig.blockedTools) ? fileConfig.blockedTools as string[] : DEFAULT_BLOCKED_TOOLS),
     fullRun: !!values["full"],
+    concurrency: parseInt(String(values.concurrency)) || (typeof fileConfig.concurrency === "number" ? fileConfig.concurrency : 1),
   }
 
   console.log(`  ${dim("Repo:")}       ${repoRoot}`)
   console.log(`  ${dim("Agent dir:")}  ${agentDir}`)
-  console.log(`  ${dim("Judges:")}     ${judgeConfigs.map(j => j.type).join(", ")}`)
+  console.log(`  ${dim("Judges:")}     ${judgeConfigs.map(j => j.model).join(", ")}`)
   console.log(`  ${dim("Categories:")} ${categories?.join(", ") ?? "all"}`)
   console.log(`  ${dim("Scenarios:")}  ${config.scenarioCount}`)
   console.log(`  ${dim("Threshold:")}  ${(config.passThreshold * 100).toFixed(0)}%`)
   console.log(`  ${dim("Improve:")}    ${config.autoImprove ? "yes" : "no"}`)
   console.log(`  ${dim("Mode:")}       ${config.fullRun ? "full (all scenarios)" : "rerun (failed/partial/new only)"}`)
   console.log(`  ${dim("Branch:")}     ${config.useBranch ? "yes (separate branch)" : "no (current branch)"}`)
+  if (config.concurrency > 1) {
+    console.log(`  ${dim("Concurrency:")} ${config.concurrency}`)
+  }
   console.log()
 
   const orchestrator = new EvalOrchestrator(config)
