@@ -224,6 +224,7 @@ export interface EvalConfig {
   branchPrefix: string
   blockedTools: string[]
   fullRun: boolean             // skip rerun logic, eval all scenarios fresh
+  concurrency: number          // max concurrent scenarios (default: 1 = sequential)
 }
 
 export interface JudgeProviderConfig {

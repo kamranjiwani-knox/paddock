@@ -68,6 +68,7 @@ export class EvalOrchestrator {
       repoRoot: config.repoRoot,
       agentDir: config.agentDir,
       blockedTools: config.blockedTools,
+      concurrency: config.concurrency,
     })
 
     const judgeProviders = config.judges.map(j => createJudgeProvider(j))
