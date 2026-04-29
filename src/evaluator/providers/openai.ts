@@ -21,7 +21,11 @@ export class OpenAIJudgeProvider implements JudgeProvider {
       body: JSON.stringify({
         model: this.model,
         messages: [{ role: "user", content: prompt }],
-        max_tokens: 4096,
+        max_tokens: 8096,
+        // JSON mode — guarantees the response is valid JSON, eliminating
+        // format-drift parse failures. The judge prompt explicitly asks for
+        // a JSON object so this just enforces what we already requested.
+        response_format: { type: "json_object" },
       }),
     })
 
