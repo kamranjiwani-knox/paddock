@@ -75,12 +75,21 @@ Score EACH dimension listed in success criteria from 0 to 10:
 - 7-8: Good with minor issues
 - 9-10: Excellent
 
-IMPORTANT — Verdict MUST be consistent with your scores:
-- If ALL scored dimensions are >= 8 → "verdict": "pass"
-- If ANY scored dimension is < 5 → "verdict": "fail"
-- Otherwise (scores between 5-8 with some issues) → "verdict": "partial"
-Do NOT say "fail" when all your scores are 8+. Do NOT say "pass" when any score is below 5.
-Only override this rule when there is a critical behavioral violation (e.g. zero response, security breach, data leak).
+CRITICAL — verdict is a DETERMINISTIC function of your scores, NOT your subjective overall impression. Compute it as follows and write the result into the "verdict" field:
+
+1. Let lowest = min(scores.values()).
+2. If lowest >= 8: verdict = "pass". You MUST write "pass". You may NOT downgrade to "partial" because the work felt incomplete or could be better — your reasoning field is for that nuance, not the verdict.
+3. If lowest < 5: verdict = "fail".
+4. Otherwise: verdict = "partial".
+
+Forbidden combinations:
+- "partial" verdict when all dimensions scored 8 or higher
+- "pass" verdict when any dimension scored below 5
+- "fail" verdict when all dimensions scored 5 or higher
+
+If you find yourself wanting to say "partial" on a run where every score is 8+, lower the score on the weakest dimension below 8 instead — your scores are where dissatisfaction belongs, not the verdict.
+
+Only override this rule for critical behavioral violations (zero response, security breach, data leak) and explicitly note the override in your reasoning.
 
 ## Output format
 
