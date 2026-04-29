@@ -20,8 +20,17 @@ import type { JudgeProvider, JudgePrompt, TokenUsage } from "../../types"
  * three judges reason at comparable depth. Set to 0 to disable thinking on
  * supported models. Older models (gemini-2.0-*, gemini-1.5-*) ignore this.
  */
-const JUDGE_THINKING_BUDGET = Number(process.env.EVAL_JUDGE_THINKING_BUDGET ?? 8000)
-const JUDGE_MAX_OUTPUT_TOKENS = Number(process.env.EVAL_JUDGE_MAX_TOKENS ?? 16000)
+function parseBudget(raw: string | undefined, fallback: number): number {
+  if (raw === undefined) return fallback
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n < 0) {
+    console.warn(`[gemini-judge] invalid env value "${raw}", using ${fallback}`)
+    return fallback
+  }
+  return Math.floor(n)
+}
+const JUDGE_THINKING_BUDGET = parseBudget(process.env.EVAL_JUDGE_THINKING_BUDGET, 8000)
+const JUDGE_MAX_OUTPUT_TOKENS = parseBudget(process.env.EVAL_JUDGE_MAX_TOKENS, 16000)
 
 const SUPPORTS_THINKING_BUDGET = (model: string): boolean =>
   /^gemini-(2\.5|3)/.test(model)
@@ -44,13 +53,18 @@ export class GeminiJudgeProvider implements JudgeProvider {
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`
 
+    const supportsThinking = SUPPORTS_THINKING_BUDGET(this.model)
     const generationConfig: Record<string, unknown> = {
-      maxOutputTokens: JUDGE_MAX_OUTPUT_TOKENS,
+      // Older models (gemini-1.5/2.0) get the original 8K cap; thinking-capable
+      // models get the wider cap to leave room when JUDGE_MAX_TOKENS is bumped
+      // alongside thinking budget. (Gemini's thinkingBudget is separate from
+      // maxOutputTokens, so this is generous, not load-bearing.)
+      maxOutputTokens: supportsThinking ? JUDGE_MAX_OUTPUT_TOKENS : 8096,
       // JSON mode — Gemini guarantees the response is parseable JSON
       // when this is set.
       responseMimeType: "application/json",
     }
-    if (SUPPORTS_THINKING_BUDGET(this.model)) {
+    if (supportsThinking) {
       // 0 disables thinking; positive values pin the budget. Without this
       // the model uses an undocumented dynamic budget per call, which
       // varies the strictness of judging across runs.

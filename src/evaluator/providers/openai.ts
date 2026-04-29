@@ -30,13 +30,33 @@ const MAX_ATTEMPTS = 3
 const RETRY_AFTER_CAP_MS = 60_000
 const RETRYABLE_HTTP_STATUS = new Set([408, 429])
 
-const JUDGE_THINKING_BUDGET = Number(process.env.EVAL_JUDGE_THINKING_BUDGET ?? 8000)
-const JUDGE_MAX_TOKENS = Number(process.env.EVAL_JUDGE_MAX_TOKENS ?? 16000)
+function parseBudget(raw: string | undefined, fallback: number): number {
+  if (raw === undefined) return fallback
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n < 0) {
+    console.warn(`[openai-judge] invalid env value "${raw}", using ${fallback}`)
+    return fallback
+  }
+  return Math.floor(n)
+}
+const JUDGE_THINKING_BUDGET = parseBudget(process.env.EVAL_JUDGE_THINKING_BUDGET, 8000)
+const JUDGE_MAX_TOKENS = parseBudget(process.env.EVAL_JUDGE_MAX_TOKENS, 16000)
 
 /** Map a token-budget number to OpenAI's reasoning_effort tier. Mirrors the
  * mental model of the Claude/Gemini judges, where the same env var value
- * controls comparable reasoning depth across all three providers. */
-function budgetToReasoningEffort(budget: number): "low" | "medium" | "high" {
+ * controls comparable reasoning depth across all three providers.
+ *
+ * Budget=0 disables reasoning where possible. gpt-5 family supports
+ * "none" (per OpenAI docs: "for latency-critical tasks that do not benefit
+ * from any reasoning"). Older o-series only supports low/medium/high, so
+ * we fall back to "low" — closest to disabled but still some reasoning.
+ * To FULLY disable reasoning regardless of model, switch to a non-reasoning
+ * model (gpt-4.1 / gpt-4o) via vars.OPENAI_MODEL. */
+function budgetToReasoningEffort(
+  budget: number,
+  model: string,
+): "none" | "low" | "medium" | "high" {
+  if (budget === 0) return /^gpt-5/.test(model) ? "none" : "low"
   if (budget <= 2000) return "low"
   if (budget <= 12000) return "medium"
   return "high"
@@ -124,9 +144,11 @@ export class OpenAIJudgeProvider implements JudgeProvider {
       // The larger budget makes room for the model's hidden reasoning
       // tokens plus the visible JSON output.
       body.max_completion_tokens = JUDGE_MAX_TOKENS
-      if (JUDGE_THINKING_BUDGET > 0) {
-        body.reasoning_effort = budgetToReasoningEffort(JUDGE_THINKING_BUDGET)
-      }
+      // Always set reasoning_effort — when budget=0, this resolves to "none"
+      // (gpt-5) or "low" (o-series fallback) to honor the user's intent to
+      // disable. Without setting it, the model would silently default to
+      // "medium" — making EVAL_JUDGE_THINKING_BUDGET=0 a no-op on OpenAI.
+      body.reasoning_effort = budgetToReasoningEffort(JUDGE_THINKING_BUDGET, this.model)
     } else {
       body.max_tokens = 8096
     }

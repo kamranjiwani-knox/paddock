@@ -18,11 +18,23 @@ import type { JudgeProvider, JudgePrompt, TokenUsage } from "../../types"
  * runs single-pass while the agent runs chain-of-thought, which makes
  * judge-vs-judge agreement noisy. Set EVAL_JUDGE_THINKING_BUDGET=0 to disable.
  */
-const JUDGE_THINKING_BUDGET = Number(process.env.EVAL_JUDGE_THINKING_BUDGET ?? 8000)
-const JUDGE_MAX_TOKENS = Number(process.env.EVAL_JUDGE_MAX_TOKENS ?? 16000)
+function parseBudget(raw: string | undefined, fallback: number): number {
+  if (raw === undefined) return fallback
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n < 0) {
+    console.warn(`[claude-judge] invalid env value "${raw}", using ${fallback}`)
+    return fallback
+  }
+  return Math.floor(n)
+}
+const JUDGE_THINKING_BUDGET = parseBudget(process.env.EVAL_JUDGE_THINKING_BUDGET, 8000)
+const JUDGE_MAX_TOKENS = parseBudget(process.env.EVAL_JUDGE_MAX_TOKENS, 16000)
 
+// Mirror the agent's THINKING_MODELS allowlist exactly. Adding speculative
+// matches (e.g. claude-haiku-4) before Anthropic confirms support risks a
+// 400 from the API on a model the user might pick via env override.
 const SUPPORTS_THINKING = (model: string): boolean =>
-  /^(claude-opus-4|claude-sonnet-4|claude-haiku-4)/.test(model)
+  /^(claude-opus-4|claude-sonnet-4)/.test(model)
 
 export class ClaudeJudgeProvider implements JudgeProvider {
   name = "claude"
