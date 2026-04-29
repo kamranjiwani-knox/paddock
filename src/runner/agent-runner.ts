@@ -47,7 +47,16 @@ function sleep(ms: number): Promise<void> {
 
 /**
  * Creates a tracing wrapper around a tool that records all calls.
- * Blocked tools return an error stub instead of executing.
+ *
+ * Blocked tools return a stub-style informational result instead of an
+ * error. The previous error-style return ('blocked in eval mode') was
+ * frequently misread by the agent as a real failure (e.g., labeling
+ * `auth check: FAILED` when no actual auth check happened). A stub
+ * response, framed as informational rather than as a failure, lets the
+ * agent reason cleanly: the call didn't happen, no result is available,
+ * fall back to task-message values. The `stub: true` flag lets agent
+ * code branch on intent if it cares; the message carries the same
+ * signal in human-readable form for the LLM context.
  */
 function wrapTool(tool: any, blocked: string[]): { wrapped: any; calls: TracedToolCall[] } {
   const calls: TracedToolCall[] = []
@@ -56,13 +65,17 @@ function wrapTool(tool: any, blocked: string[]): { wrapped: any; calls: TracedTo
     ...tool,
     async execute(params: unknown, ctx: unknown): Promise<unknown> {
       if (blocked.includes(tool.name)) {
+        const stubMessage =
+          `Tool '${tool.name}' is intercepted in eval mode — no live call was made. ` +
+          `No result is available from this invocation. Continue with the values provided ` +
+          `in the task message; do not label any subsequent check derived from this tool ` +
+          `as FAILED, since no real result exists to fail.`
         const call: TracedToolCall = {
           name: tool.name,
           params,
-          result: { error: "blocked in eval mode" },
+          result: { stub: true, message: stubMessage },
           durationMs: 0,
           ts: Date.now(),
-          error: "blocked in eval mode",
         }
         calls.push(call)
         return call.result
