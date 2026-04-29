@@ -46,17 +46,26 @@ const JUDGE_MAX_TOKENS = parseBudget(process.env.EVAL_JUDGE_MAX_TOKENS, 16000)
  * mental model of the Claude/Gemini judges, where the same env var value
  * controls comparable reasoning depth across all three providers.
  *
- * Budget=0 disables reasoning where possible. gpt-5 family supports
- * "none" (per OpenAI docs: "for latency-critical tasks that do not benefit
- * from any reasoning"). Older o-series only supports low/medium/high, so
- * we fall back to "low" — closest to disabled but still some reasoning.
+ * OpenAI's API takes a tier name (string enum), not a token count:
+ *   none < minimal < low < medium < high < xhigh
+ *
+ * Mapping (gpt-5 family supports the full set; older o-series tops out at
+ * low/medium/high):
+ *   budget === 0     → "none" (gpt-5) | "low" (o-series fallback)
+ *   1 ≤ budget ≤ 500 → "minimal" (gpt-5) | "low" (o-series fallback)
+ *   501 ≤ ≤ 2000     → "low"
+ *   2001 ≤ ≤ 12000   → "medium"
+ *   > 12000          → "high"
+ *
  * To FULLY disable reasoning regardless of model, switch to a non-reasoning
  * model (gpt-4.1 / gpt-4o) via vars.OPENAI_MODEL. */
 function budgetToReasoningEffort(
   budget: number,
   model: string,
-): "none" | "low" | "medium" | "high" {
-  if (budget === 0) return /^gpt-5/.test(model) ? "none" : "low"
+): "none" | "minimal" | "low" | "medium" | "high" {
+  const isGpt5 = /^gpt-5/.test(model)
+  if (budget === 0) return isGpt5 ? "none" : "low"
+  if (budget <= 500 && isGpt5) return "minimal"
   if (budget <= 2000) return "low"
   if (budget <= 12000) return "medium"
   return "high"
