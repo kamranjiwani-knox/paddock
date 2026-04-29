@@ -125,11 +125,23 @@ export interface TokenUsage {
   totalTokens: number
 }
 
+export interface JudgePrompt {
+  /** Static prefix — identical across every judge call within a paddock run.
+   * Goes in the cacheable position (Anthropic system w/ cache_control,
+   * OpenAI system role, Gemini systemInstruction). */
+  system: string
+  /** Variable suffix — the per-eval scenario, SOUL.md, execution trace,
+   * and success criteria. Goes in the user message. */
+  user: string
+}
+
 export interface JudgeProvider {
   name: string
   model: string
   usage: TokenUsage
-  complete(prompt: string): Promise<string>
+  /** Accepts either a plain string (legacy/back-compat) or a structured
+   * JudgePrompt for caching-aware providers. */
+  complete(prompt: string | JudgePrompt): Promise<string>
 }
 
 // ─── Improvement ─────────────────────────────────────────────

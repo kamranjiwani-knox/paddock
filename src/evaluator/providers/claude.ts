@@ -1,11 +1,16 @@
 import Anthropic from "@anthropic-ai/sdk"
-import type { JudgeProvider, TokenUsage } from "../../types"
+import type { JudgeProvider, JudgePrompt, TokenUsage } from "../../types"
 
 /**
  * Claude judge provider.
  * Supports both ANTHROPIC_API_KEY and CLAUDE_CODE_OAUTH_TOKEN (comma-separated for rotation).
  * OAuth tokens (sk-ant-oat01-*) use authToken + beta headers.
  * API keys (sk-ant-api03-*) use apiKey.
+ *
+ * Prompt caching: when complete() receives a JudgePrompt, the static system
+ * prefix is sent as a cached block (cache_control: ephemeral). Anthropic
+ * caches everything up to and including that breakpoint. Subsequent calls
+ * within the 5-min TTL pay 10% of input cost on the cached prefix.
  */
 export class ClaudeJudgeProvider implements JudgeProvider {
   name = "claude"
@@ -46,16 +51,24 @@ export class ClaudeJudgeProvider implements JudgeProvider {
     this.tokenIndex = (this.tokenIndex + 1) % this.tokens.length
   }
 
-  async complete(prompt: string): Promise<string> {
+  async complete(prompt: string | JudgePrompt): Promise<string> {
+    const { system, user } = typeof prompt === "string"
+      ? { system: "", user: prompt }
+      : prompt
+
     let lastError: unknown
 
     for (let attempt = 0; attempt < this.tokens.length; attempt++) {
       try {
         const client = this.getClient()
+        const systemBlocks = system
+          ? [{ type: "text" as const, text: system, cache_control: { type: "ephemeral" as const } }]
+          : undefined
         const response = await client.messages.create({
           model: this.model,
           max_tokens: 8096,
-          messages: [{ role: "user", content: prompt }],
+          ...(systemBlocks ? { system: systemBlocks } : {}),
+          messages: [{ role: "user", content: user }],
         })
         if (response.usage) {
           this.usage.inputTokens += response.usage.input_tokens
