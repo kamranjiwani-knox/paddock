@@ -18,7 +18,13 @@ export class GeminiJudgeProvider implements JudgeProvider {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens: 4096 },
+        generationConfig: {
+          maxOutputTokens: 8096,
+          // JSON mode — Gemini guarantees the response is parseable JSON
+          // when this is set. The judge prompt asks for a JSON object so
+          // this just enforces what we already requested.
+          responseMimeType: "application/json",
+        },
       }),
     })
 
