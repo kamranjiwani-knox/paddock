@@ -1,74 +1,25 @@
-import type { Scenario, ExecutionTrace, EvalDimension } from "../types"
+import type { Scenario, ExecutionTrace, EvalDimension, JudgePrompt } from "../types"
 
-export function buildJudgePrompt(
-  trace: ExecutionTrace,
-  scenario: Scenario,
-  soulMd: string,
-): string {
-  const formattedMessages = scenario.messages
-    .map((m, i) => `  ${i + 1}. [${m.from}]: "${m.text}"`)
-    .join("\n")
-
-  const formattedResponses = trace.responses.length > 0
-    ? trace.responses.map((r, i) => `  ${i + 1}. "${r.text.slice(0, 12000)}${r.text.length > 12000 ? `\n  [... truncated, full length: ${r.text.length} chars]` : ""}"`).join("\n")
-    : "  (no responses captured)"
-
-  const formattedToolCalls = trace.toolCalls.length > 0
-    ? trace.toolCalls.map(tc => {
-        const params = JSON.stringify(tc.params ?? {}).slice(0, 200)
-        const result = tc.error
-          ? `ERROR: ${tc.error}`
-          : JSON.stringify(tc.result ?? "").slice(0, 200)
-        return `  - ${tc.name}(${params}) → ${result} [${tc.durationMs}ms]`
-      }).join("\n")
-    : "  (no tool calls)"
-
-  const formattedErrors = trace.errors.length > 0
-    ? trace.errors.map(e => `  - [${e.phase}] ${e.message}`).join("\n")
-    : "  (no errors)"
-
-  const formattedCriteria = scenario.successCriteria
-    .map(c => `  - ${c.dimension} (weight: ${c.weight}): ${c.description}`)
-    .join("\n")
-
-  const dimensionList = scenario.successCriteria.map(c => `"${c.dimension}"`).join(", ")
-
-  return `You are evaluating an AI agent's performance on a test scenario.
+/**
+ * Static prefix shared across every judge call within a paddock run.
+ *
+ * Placed at the FRONT of the prompt so it forms a stable byte prefix that
+ * Anthropic / OpenAI / Gemini caching can match against. Anthropic's
+ * cache_control breakpoint is anchored to this string. OpenAI's implicit
+ * caching matches against the leading 1024 tokens. Gemini's systemInstruction
+ * is structurally separated.
+ *
+ * The example below is a CONSTANT example, not interpolated per-scenario;
+ * keeping the dimension list dynamic in the user content (variable) means
+ * the system prefix never drifts.
+ */
+const JUDGE_SYSTEM_PROMPT = `You are evaluating an AI agent's performance on a test scenario.
 Be strict but fair. Score based on observable behavior, not assumptions.
 Only score dimensions that have criteria defined. Skip others.
 
-## Scenario
-Name: ${scenario.name}
-Category: ${scenario.category}
-Difficulty: ${scenario.difficulty}
-Description: ${scenario.description}
-Expected behavior: ${scenario.expectedBehavior}
-
-## Agent's Personality (SOUL.md)
-${soulMd || "(not provided)"}
-
-## Execution Trace
-
-### User Messages Sent:
-${formattedMessages}
-
-### Agent Responses:
-${formattedResponses}
-
-### Tool Calls Made:
-${formattedToolCalls}
-
-### Errors Encountered:
-${formattedErrors}
-
-### Timing:
-Total: ${trace.timing.totalMs}ms
-
-## Success Criteria
-${formattedCriteria}
-
 ## Instructions
-Score EACH dimension listed in success criteria from 0 to 10:
+
+Score EACH dimension listed in the success criteria from 0 to 10:
 - 0-2: Critical failure
 - 3-4: Major issues
 - 5-6: Partial success with notable problems
@@ -105,7 +56,7 @@ The object must have these top-level keys:
   "suggestions": <array of 1-3 short improvement strings>
 }
 
-The "scores" and "reasoning" objects MUST contain a key for EACH dimension defined in the Success Criteria block above (and only those). Available dimensions for this scenario: ${dimensionList}.
+The "scores" and "reasoning" objects MUST contain a key for EACH dimension defined in the Success Criteria block of the user message (and only those).
 
 Example for a scenario with criteria [tool_usage, correctness, soul_compliance]:
 
@@ -120,6 +71,75 @@ Example for a scenario with criteria [tool_usage, correctness, soul_compliance]:
   "confidence": 0.92,
   "suggestions": ["Capture image digest into a shell variable for the rollback step."]
 }`
+
+export function buildJudgePrompt(
+  trace: ExecutionTrace,
+  scenario: Scenario,
+  soulMd: string,
+): JudgePrompt {
+  const formattedMessages = scenario.messages
+    .map((m, i) => `  ${i + 1}. [${m.from}]: "${m.text}"`)
+    .join("\n")
+
+  const formattedResponses = trace.responses.length > 0
+    ? trace.responses.map((r, i) => `  ${i + 1}. "${r.text.slice(0, 12000)}${r.text.length > 12000 ? `\n  [... truncated, full length: ${r.text.length} chars]` : ""}"`).join("\n")
+    : "  (no responses captured)"
+
+  const formattedToolCalls = trace.toolCalls.length > 0
+    ? trace.toolCalls.map(tc => {
+        const params = JSON.stringify(tc.params ?? {}).slice(0, 200)
+        const result = tc.error
+          ? `ERROR: ${tc.error}`
+          : JSON.stringify(tc.result ?? "").slice(0, 200)
+        return `  - ${tc.name}(${params}) → ${result} [${tc.durationMs}ms]`
+      }).join("\n")
+    : "  (no tool calls)"
+
+  const formattedErrors = trace.errors.length > 0
+    ? trace.errors.map(e => `  - [${e.phase}] ${e.message}`).join("\n")
+    : "  (no errors)"
+
+  const formattedCriteria = scenario.successCriteria
+    .map(c => `  - ${c.dimension} (weight: ${c.weight}): ${c.description}`)
+    .join("\n")
+
+  const dimensionList = scenario.successCriteria.map(c => `"${c.dimension}"`).join(", ")
+
+  const user = `Evaluate this run against the criteria below. Output the JSON object specified in the system instructions.
+
+## Scenario
+Name: ${scenario.name}
+Category: ${scenario.category}
+Difficulty: ${scenario.difficulty}
+Description: ${scenario.description}
+Expected behavior: ${scenario.expectedBehavior}
+
+## Agent's Personality (SOUL.md)
+${soulMd || "(not provided)"}
+
+## Execution Trace
+
+### User Messages Sent:
+${formattedMessages}
+
+### Agent Responses:
+${formattedResponses}
+
+### Tool Calls Made:
+${formattedToolCalls}
+
+### Errors Encountered:
+${formattedErrors}
+
+### Timing:
+Total: ${trace.timing.totalMs}ms
+
+## Success Criteria
+${formattedCriteria}
+
+Available dimensions for this scenario: ${dimensionList}.`
+
+  return { system: JUDGE_SYSTEM_PROMPT, user }
 }
 
 export function parseJudgeResponse(

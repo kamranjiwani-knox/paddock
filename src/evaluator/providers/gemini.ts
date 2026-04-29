@@ -1,5 +1,18 @@
-import type { JudgeProvider, TokenUsage } from "../../types"
+import type { JudgeProvider, JudgePrompt, TokenUsage } from "../../types"
 
+/**
+ * Gemini judge provider.
+ *
+ * Prompt structure: when complete() receives a JudgePrompt, the static
+ * system prefix is sent as `systemInstruction` (Gemini's structured
+ * separation) and the variable content as `contents`. This positions
+ * us to take advantage of Gemini's implicit caching when it stabilizes
+ * (currently flaky on gemini-3-pro-preview per a known Google issue).
+ *
+ * Explicit caching via `cachedContents` is a separate, larger change
+ * and is deferred — implicit + structured separation is already a win
+ * for any scenario where implicit caching works.
+ */
 export class GeminiJudgeProvider implements JudgeProvider {
   name = "gemini"
   model: string
@@ -11,21 +24,30 @@ export class GeminiJudgeProvider implements JudgeProvider {
     this.apiKey = apiKey
   }
 
-  async complete(prompt: string): Promise<string> {
+  async complete(prompt: string | JudgePrompt): Promise<string> {
+    const { system, user } = typeof prompt === "string"
+      ? { system: "", user: prompt }
+      : prompt
+
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`
+
+    const body: Record<string, unknown> = {
+      contents: [{ parts: [{ text: user }] }],
+      generationConfig: {
+        maxOutputTokens: 8096,
+        // JSON mode — Gemini guarantees the response is parseable JSON
+        // when this is set.
+        responseMimeType: "application/json",
+      },
+    }
+    if (system) {
+      body.systemInstruction = { parts: [{ text: system }] }
+    }
+
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          maxOutputTokens: 8096,
-          // JSON mode — Gemini guarantees the response is parseable JSON
-          // when this is set. The judge prompt asks for a JSON object so
-          // this just enforces what we already requested.
-          responseMimeType: "application/json",
-        },
-      }),
+      body: JSON.stringify(body),
     })
 
     if (!res.ok) {
