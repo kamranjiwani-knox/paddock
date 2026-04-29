@@ -11,6 +11,14 @@ import type { JudgeProvider, JudgePrompt, TokenUsage } from "../../types"
  * the cache lifetime beyond the default ~5-10 min idle, enabling cache
  * hits across paddock CI runs (gpt-4.1 / gpt-5 family supports this).
  *
+ * Reasoning: gpt-5 family and o-series support `reasoning_effort`. gpt-4.1
+ * does NOT — it's marketed as "the smartest non-reasoning model" and the
+ * parameter is rejected. We keep gpt-4.1 backward-compatible (no reasoning
+ * params, max_tokens=8096), and only add reasoning_effort + the larger
+ * max_completion_tokens budget when the model supports it. Token-budget
+ * env var maps to a reasoning_effort level since OpenAI's API doesn't
+ * accept a raw token budget — only effort tiers.
+ *
  * Retry: 408 / 429 / 5xx / fetch-level network errors retry up to
  * MAX_ATTEMPTS. Honors Retry-After when present (capped at 60s);
  * otherwise exponential backoff + jitter. Without this, paddock's
@@ -21,6 +29,18 @@ import type { JudgeProvider, JudgePrompt, TokenUsage } from "../../types"
 const MAX_ATTEMPTS = 3
 const RETRY_AFTER_CAP_MS = 60_000
 const RETRYABLE_HTTP_STATUS = new Set([408, 429])
+
+const JUDGE_THINKING_BUDGET = Number(process.env.EVAL_JUDGE_THINKING_BUDGET ?? 8000)
+const JUDGE_MAX_TOKENS = Number(process.env.EVAL_JUDGE_MAX_TOKENS ?? 16000)
+
+/** Map a token-budget number to OpenAI's reasoning_effort tier. Mirrors the
+ * mental model of the Claude/Gemini judges, where the same env var value
+ * controls comparable reasoning depth across all three providers. */
+function budgetToReasoningEffort(budget: number): "low" | "medium" | "high" {
+  if (budget <= 2000) return "low"
+  if (budget <= 12000) return "medium"
+  return "high"
+}
 
 /** Retryable iff:
  *  - fetch-level network failure (Node/Bun raise TypeError per WHATWG fetch spec), OR
@@ -69,6 +89,13 @@ export class OpenAIJudgeProvider implements JudgeProvider {
     return /^gpt-(4\.1|5)/.test(this.model)
   }
 
+  /** Reasoning models accept `reasoning_effort` and require `max_completion_tokens`
+   * (instead of legacy `max_tokens`). gpt-4.1 / gpt-4o etc. are non-reasoning —
+   * passing reasoning_effort to them is rejected by the API. */
+  private supportsReasoningEffort(): boolean {
+    return /^(gpt-5|o[0-9]+)/.test(this.model)
+  }
+
   async complete(prompt: string | JudgePrompt): Promise<string> {
     const { system, user } = typeof prompt === "string"
       ? { system: "", user: prompt }
@@ -81,16 +108,27 @@ export class OpenAIJudgeProvider implements JudgeProvider {
         ]
       : [{ role: "user" as const, content: user }]
 
+    const reasoning = this.supportsReasoningEffort()
     const body: Record<string, unknown> = {
       model: this.model,
       messages,
-      max_tokens: 8096,
       // JSON mode — guarantees the response is valid JSON, eliminating
       // format-drift parse failures.
       response_format: { type: "json_object" },
       // Routes calls with the same key to the same shard, maximizing
       // implicit cache hit rate across paddock evaluations.
       prompt_cache_key: "paddock-judge",
+    }
+    if (reasoning) {
+      // Reasoning models reject max_tokens; require max_completion_tokens.
+      // The larger budget makes room for the model's hidden reasoning
+      // tokens plus the visible JSON output.
+      body.max_completion_tokens = JUDGE_MAX_TOKENS
+      if (JUDGE_THINKING_BUDGET > 0) {
+        body.reasoning_effort = budgetToReasoningEffort(JUDGE_THINKING_BUDGET)
+      }
+    } else {
+      body.max_tokens = 8096
     }
     if (this.supports24hRetention()) {
       body.prompt_cache_retention = "24h"
