@@ -48,15 +48,37 @@ function sleep(ms: number): Promise<void> {
 /**
  * Creates a tracing wrapper around a tool that records all calls.
  *
- * Blocked tools return a stub-style informational result instead of an
- * error. The previous error-style return ('blocked in eval mode') was
- * frequently misread by the agent as a real failure (e.g., labeling
- * `auth check: FAILED` when no actual auth check happened). A stub
- * response, framed as informational rather than as a failure, lets the
- * agent reason cleanly: the call didn't happen, no result is available,
- * fall back to task-message values. The `stub: true` flag lets agent
- * code branch on intent if it cares; the message carries the same
- * signal in human-readable form for the LLM context.
+ * Blocked tools return a SUCCESS-shape result. Semantically a paddock
+ * blocked-tool call is closer to "success that didn't happen because
+ * we asked it not to" than to "failure" — the harness intentionally
+ * short-circuits to keep evaluation hermetic. Treating it as success
+ * removes the labeling-judgment work the agent and judges otherwise
+ * have to do (FAILED vs UNDETERMINED vs SUCCEEDED labels) and lets
+ * the agent simply continue planning from task-message values.
+ *
+ * Prior history:
+ *   - Original shape: { error: "blocked in eval mode" } — agent
+ *     treated as real failure, labeled checks "auth: FAILED".
+ *   - PR #7: { stub: true, message: "...intercepted..." } — fixed
+ *     FAILED-mislabeling but introduced fabricated-SUCCEEDED in the
+ *     opposite direction.
+ *   - PR #8 (closed): symmetric "UNDETERMINED" stub message — still
+ *     required the agent to reason about labeling.
+ *   - This PR: success-shape — agent doesn't need to reason about
+ *     the result at all; it's fine, move on.
+ *
+ * The `output` string is bare ("[stubbed in eval mode]") so the agent
+ * has no fake auth tokens / project info to pattern-match around.
+ * SOUL.md guidance ("use task-message values when tools fail or are
+ * blocked") still applies and is what drives planning.
+ *
+ * Trade-off: this removes paddock's coverage of the agent's
+ * failure-handling code path (loop.service.ts:errorValue check). That
+ * path is still exercised in production by genuinely-failing tools;
+ * the loss is only in eval. If failure-handling needs paddock
+ * coverage in the future, file a separate scenario type that uses a
+ * tool which returns a real-shaped error (different concern from
+ * eval-blocking).
  */
 function wrapTool(tool: any, blocked: string[]): { wrapped: any; calls: TracedToolCall[] } {
   const calls: TracedToolCall[] = []
@@ -65,15 +87,10 @@ function wrapTool(tool: any, blocked: string[]): { wrapped: any; calls: TracedTo
     ...tool,
     async execute(params: unknown, ctx: unknown): Promise<unknown> {
       if (blocked.includes(tool.name)) {
-        const stubMessage =
-          `Tool '${tool.name}' is intercepted in eval mode — no live call was made. ` +
-          `No result is available from this invocation. Continue with the values provided ` +
-          `in the task message; do not label any subsequent check derived from this tool ` +
-          `as FAILED, since no real result exists to fail.`
         const call: TracedToolCall = {
           name: tool.name,
           params,
-          result: { stub: true, message: stubMessage },
+          result: { ok: true, output: "[stubbed in eval mode]" },
           durationMs: 0,
           ts: Date.now(),
         }
