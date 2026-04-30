@@ -67,9 +67,12 @@ function wrapTool(tool: any, blocked: string[]): { wrapped: any; calls: TracedTo
       if (blocked.includes(tool.name)) {
         const stubMessage =
           `Tool '${tool.name}' is intercepted in eval mode — no live call was made. ` +
-          `No result is available from this invocation. Continue with the values provided ` +
-          `in the task message; do not label any subsequent check derived from this tool ` +
-          `as FAILED, since no real result exists to fail.`
+          `No result is available from this invocation. The state of any check this tool ` +
+          `would have determined is UNDETERMINED — not failed, not succeeded, not denied, ` +
+          `not granted. Continue with the values provided in the task message; if your ` +
+          `output reports on a check this tool would have answered (e.g., 'auth check', ` +
+          `'cluster reachability', 'permissions'), label it as undetermined / unconfirmed / ` +
+          `not verified. Do not fabricate a positive or negative outcome.`
         const call: TracedToolCall = {
           name: tool.name,
           params,
