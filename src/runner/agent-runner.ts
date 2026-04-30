@@ -7,6 +7,7 @@ import type {
   TracedToolCall,
   TracedError,
   TracedResponse,
+  TokenUsage,
 } from "../types"
 
 interface AgentRunnerConfig {
@@ -325,6 +326,21 @@ export class AgentRunner {
       // Give fire-and-forget tasks a moment to settle (heartbeat, session writes)
       await sleep(3000)
 
+      // Capture agent token usage BEFORE stopping the runtime — getTokenUsage()
+      // reads the in-memory accumulator on the LLM gateway, which lives until
+      // runtime.stop() tears modules down. Order matters here.
+      let agentTokenUsage: Record<string, TokenUsage> | undefined
+      try {
+        const r = runtime as unknown as { getTokenUsage?: () => Record<string, TokenUsage> }
+        if (typeof r.getTokenUsage === "function") {
+          const usage = r.getTokenUsage()
+          // Only attach if non-empty so we don't write {} when claude-cli is in use.
+          if (Object.keys(usage).length > 0) agentTokenUsage = usage
+        }
+      } catch {
+        // getTokenUsage failures are non-fatal — just skip token capture.
+      }
+
       // Stop runtime
       try {
         await runtime.stop()
@@ -361,6 +377,7 @@ export class AgentRunner {
           configJson,
           toolNames: [...new Set(toolNames)],
         },
+        ...(agentTokenUsage ? { agentTokenUsage } : {}),
       }
     } catch (err) {
       errors.push({

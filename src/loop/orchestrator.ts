@@ -333,6 +333,27 @@ export class EvalOrchestrator {
         this.state.tokenUsage[key] = { ...jp.usage }
       }
 
+      // Collect agent token usage from each scenario trace and merge under the
+      // same `tokenUsage` map the report writer already serialises. We key
+      // agent entries as `claude/<model>` to match the judge format
+      // (`<provider>/<model>`) so downstream consumers (consistency-test
+      // aggregator, cost-summary renderer) can iterate uniformly without
+      // special-casing agent vs judge.
+      for (const trace of this.state.traces ?? []) {
+        if (!trace.agentTokenUsage) continue
+        for (const [model, usage] of Object.entries(trace.agentTokenUsage)) {
+          const key = `claude/${model}`
+          const existing = this.state.tokenUsage[key]
+          this.state.tokenUsage[key] = existing
+            ? {
+                inputTokens: existing.inputTokens + usage.inputTokens,
+                outputTokens: existing.outputTokens + usage.outputTokens,
+                totalTokens: existing.totalTokens + usage.totalTokens,
+              }
+            : { ...usage }
+        }
+      }
+
       if (config.useBranch) {
         await git.restoreOriginalBranch()
       }

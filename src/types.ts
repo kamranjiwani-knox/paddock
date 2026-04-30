@@ -57,6 +57,11 @@ export interface ExecutionTrace {
   errors: TracedError[]
   timing: TraceTiming
   metadata: TraceMetadata
+  /** Cumulative token usage from the agent's LLM calls during this scenario,
+   * keyed by model name (e.g. "claude-opus-4-7"). Captured via
+   * `runtime.getTokenUsage()` after the scenario completes. Undefined when the
+   * agent runtime doesn't expose token usage (e.g. claude-cli provider). */
+  agentTokenUsage?: Record<string, TokenUsage>
 }
 
 export interface TracedResponse {
