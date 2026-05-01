@@ -195,6 +195,31 @@ export class AgentRunner {
     const tempDir = join("/tmp", `paddock-agent-${Date.now()}-${scenario.id}`)
     mkdirSync(tempDir, { recursive: true })
 
+    // Hoisted state — these need to live across the try/catch boundary so the
+    // failed-scenario path can still capture partial token usage and restore
+    // env / stop the runtime even when the happy-path return never fires.
+    let runtime: {
+      start: () => Promise<void>
+      stop?: () => Promise<void>
+      getTokenUsage?: () => Record<string, TokenUsage>
+    } | undefined
+    let prevEnv: NodeJS.ProcessEnv | undefined
+    let agentTokenUsage: Record<string, TokenUsage> | undefined
+
+    // Capture in-memory accumulator from the LLM gateway BEFORE stop tears it
+    // down. Idempotent — safe to call from happy path AND error/finally
+    // (gateway is in-memory, no I/O), so we always get whatever tokens were
+    // accumulated up to the point of failure.
+    const captureTokens = () => {
+      if (!runtime || typeof runtime.getTokenUsage !== "function") return
+      try {
+        const usage = runtime.getTokenUsage()
+        if (Object.keys(usage).length > 0) agentTokenUsage = usage
+      } catch (err) {
+        console.warn(`[paddock] token capture failed: ${(err as Error).message ?? err}`)
+      }
+    }
+
     // Catch unhandled rejections from fire-and-forget tasks inside the runtime
     const caughtRejections: Error[] = []
     const rejectionHandler = (err: unknown) => {
@@ -273,14 +298,14 @@ export class AgentRunner {
       const exampleDir = join(runtimePath, ".agent.example")
       const init = new InitModule(tempDir, existsSync(exampleDir) ? exampleDir : tempDir)
 
-      const prevEnv = { ...process.env }
+      prevEnv = { ...process.env }
       // Override model for eval — runtime reads CLAUDE_MODEL from env
       process.env.CLAUDE_MODEL = process.env.EVAL_LLM_MODEL ?? process.env.CLAUDE_MODEL ?? "claude-sonnet-4-6"
       if (scenario.setup?.env) {
         Object.assign(process.env, scenario.setup.env)
       }
 
-      const runtime = new AgentRuntime({
+      runtime = new AgentRuntime({
         init,
         llm: {
           provider: "claude",
@@ -291,7 +316,8 @@ export class AgentRunner {
         tools: finalTracedTools,
       })
 
-      await runtime.start()
+      // TS narrowing doesn't carry across the assignment above, so assert.
+      await runtime!.start()
 
       // Send scenario messages
       for (const msg of scenario.messages) {
@@ -326,30 +352,9 @@ export class AgentRunner {
       // Give fire-and-forget tasks a moment to settle (heartbeat, session writes)
       await sleep(3000)
 
-      // Capture agent token usage BEFORE stopping the runtime — getTokenUsage()
-      // reads the in-memory accumulator on the LLM gateway, which lives until
-      // runtime.stop() tears modules down. Order matters here.
-      let agentTokenUsage: Record<string, TokenUsage> | undefined
-      try {
-        const r = runtime as unknown as { getTokenUsage?: () => Record<string, TokenUsage> }
-        if (typeof r.getTokenUsage === "function") {
-          const usage = r.getTokenUsage()
-          // Only attach if non-empty so we don't write {} when claude-cli is in use.
-          if (Object.keys(usage).length > 0) agentTokenUsage = usage
-        }
-      } catch {
-        // getTokenUsage failures are non-fatal — just skip token capture.
-      }
-
-      // Stop runtime
-      try {
-        await runtime.stop()
-      } catch {
-        // ignore stop errors
-      }
-
-      // Restore env
-      process.env = prevEnv
+      // Token capture, runtime stop, and env restore moved to the `finally`
+      // block below so the failed-scenario path also captures partial usage
+      // and cleans up. See captureTokens() defined at the top of this method.
 
       // Record any unhandled rejections as errors
       for (const rejection of caughtRejections) {
@@ -394,8 +399,24 @@ export class AgentRunner {
         errors,
         timing: { startedAt, endedAt: Date.now(), totalMs: Date.now() - startedAt },
         metadata: { agentDir: tempDir, soulMd: "", configJson: "{}", toolNames: [] },
+        // Tokens captured in finally before this return runs (return-then-finally
+        // semantics in JS guarantee finally executes before the function actually
+        // resolves). If the agent made N LLM calls before throwing, those tokens
+        // ARE attributed to the failed scenario instead of vanishing.
+        ...(agentTokenUsage ? { agentTokenUsage } : {}),
       }
     } finally {
+      // Capture tokens BEFORE stop tears down the gateway. captureTokens()
+      // is defensive: no-op if runtime never got constructed, swallows any
+      // throw from the getter so cleanup keeps going regardless.
+      captureTokens()
+      // Stop runtime if it was started. Best-effort — stop errors don't
+      // block trace return.
+      if (runtime?.stop) {
+        try { await runtime.stop() } catch { /* ignore */ }
+      }
+      // Restore env if we managed to snapshot it before throwing.
+      if (prevEnv) process.env = prevEnv
       process.removeListener("unhandledRejection", rejectionHandler)
       try {
         rmSync(tempDir, { recursive: true, force: true })
