@@ -243,18 +243,25 @@ async function cmdRun(args: string[]) {
   console.log(`  ${dim("Iterations:")} ${state.iteration}`)
   console.log(`  ${dim("Branch:")}    ${state.branchName}`)
 
-  // Token usage per judge
+  // Token usage per judge. With cache + thinking breakdown enabled, each
+  // line shows: <input> in [+ <cache_read>r/<cache_write>w cached] / <output> out
+  // [+ <thinking> think] (<total> total). Cache and thinking suffixes only
+  // render when the provider exposed those buckets — non-cached / non-thinking
+  // judges stay terse.
   const { lines: usageLines, grandTotal } = formatTokenUsage(state.tokenUsage)
   if (usageLines.length > 0) {
     console.log()
     console.log(bold("  Token Usage"))
     console.log()
-    for (const u of usageLines) {
-      console.log(`  ${dim(u.provider + ":")} ${u.input} in / ${u.output} out (${u.total} total)`)
+    const renderLine = (u: { provider: string; input: string; cache: string; output: string; total: string }) => {
+      const cacheSuffix = u.cache === "—" ? "" : ` [+ ${u.cache} cache r/w]`
+      const outParts = u.output.split(" / ")
+      const outSuffix = outParts.length > 1 ? ` [+ ${outParts[1]} think]` : ""
+      const outVisible = outParts[0]
+      return `  ${dim(u.provider + ":")} ${u.input} in${cacheSuffix} / ${outVisible} out${outSuffix} (${u.total} total)`
     }
-    if (grandTotal) {
-      console.log(`  ${dim(grandTotal.provider + ":")} ${grandTotal.input} in / ${grandTotal.output} out (${grandTotal.total} total)`)
-    }
+    for (const u of usageLines) console.log(renderLine(u))
+    if (grandTotal) console.log(renderLine(grandTotal))
   }
 
   if (state.error) {

@@ -189,12 +189,39 @@ export class OpenAIJudgeProvider implements JudgeProvider {
 
         const data = await res.json() as {
           choices?: Array<{ message?: { content?: string } }>
-          usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
+          usage?: {
+            prompt_tokens?: number
+            completion_tokens?: number
+            total_tokens?: number
+            prompt_tokens_details?: { cached_tokens?: number }
+            completion_tokens_details?: { reasoning_tokens?: number }
+          }
         }
         if (data.usage) {
-          this.usage.inputTokens += data.usage.prompt_tokens ?? 0
-          this.usage.outputTokens += data.usage.completion_tokens ?? 0
-          this.usage.totalTokens += data.usage.total_tokens ?? 0
+          const u = data.usage
+          // Split prompt_tokens into cached vs uncached. OpenAI's implicit
+          // prefix cache surfaces the cached portion in prompt_tokens_details
+          // and STILL counts those tokens in prompt_tokens (i.e. cached is a
+          // SUBSET, not separate). Subtract so each bucket is disjoint.
+          const cachedIn = u.prompt_tokens_details?.cached_tokens ?? 0
+          const uncachedIn = (u.prompt_tokens ?? 0) - cachedIn
+          this.usage.inputTokens += Math.max(0, uncachedIn)
+          this.usage.cacheReadTokens = (this.usage.cacheReadTokens ?? 0) + cachedIn
+
+          // Split completion_tokens into visible vs reasoning. OpenAI counts
+          // reasoning_tokens INSIDE completion_tokens; same subtract pattern.
+          const reasoningOut = u.completion_tokens_details?.reasoning_tokens ?? 0
+          const visibleOut = (u.completion_tokens ?? 0) - reasoningOut
+          this.usage.outputTokens += Math.max(0, visibleOut)
+          this.usage.thinkingTokens = (this.usage.thinkingTokens ?? 0) + reasoningOut
+
+          // Derive total locally — total_tokens from the API is the sum of
+          // all four buckets, which we now track explicitly.
+          this.usage.totalTokens =
+            this.usage.inputTokens +
+            (this.usage.cacheReadTokens ?? 0) +
+            this.usage.outputTokens +
+            (this.usage.thinkingTokens ?? 0)
         }
         return data.choices?.[0]?.message?.content ?? ""
       } catch (err) {

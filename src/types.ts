@@ -125,8 +125,27 @@ export interface ConsensusResult {
 }
 
 export interface TokenUsage {
+  /** Un-cached input tokens (full input rate). Cache reads / writes are
+   * tracked separately below — keep them out of this field. */
   inputTokens: number
+  /** Tokens written to prompt cache. Anthropic charges 1.25× input rate.
+   * OpenAI uses implicit caching with no creation charge (left 0). */
+  cacheCreationTokens?: number
+  /** Tokens read from prompt cache. Anthropic charges 0.1× input rate.
+   * OpenAI charges 0.5× input rate. */
+  cacheReadTokens?: number
+  /** Visible output tokens only — does NOT include reasoning/thinking. */
   outputTokens: number
+  /** Thinking / reasoning tokens billed at the output rate. Populated when
+   * the provider exposes it as a distinct counter:
+   *   Gemini → `thoughtsTokenCount`
+   *   OpenAI → `completion_tokens_details.reasoning_tokens`
+   * Anthropic doesn't split thinking out in `usage` — the model's
+   * `output_tokens` already includes thinking blocks — so the agent and
+   * Claude judge leave this 0 (and outputTokens contains the combined sum).
+   * Cost = (output + thinking) × output rate. */
+  thinkingTokens?: number
+  /** Sum of all the above. */
   totalTokens: number
 }
 

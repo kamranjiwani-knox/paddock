@@ -115,9 +115,28 @@ export class ClaudeJudgeProvider implements JudgeProvider {
             : {}),
         })
         if (response.usage) {
-          this.usage.inputTokens += response.usage.input_tokens
-          this.usage.outputTokens += response.usage.output_tokens
-          this.usage.totalTokens += response.usage.input_tokens + response.usage.output_tokens
+          // Anthropic surfaces 4 input buckets when prompt caching is on.
+          // Track them disjointly so the cost report can apply correct
+          // discounted rates (cache reads at 0.1×, cache creation at 1.25×).
+          // `input_tokens` from the SDK is already the un-cached portion.
+          const u = response.usage as Anthropic.Usage & {
+            cache_creation_input_tokens?: number
+            cache_read_input_tokens?: number
+          }
+          this.usage.inputTokens += u.input_tokens ?? 0
+          this.usage.cacheCreationTokens =
+            (this.usage.cacheCreationTokens ?? 0) + (u.cache_creation_input_tokens ?? 0)
+          this.usage.cacheReadTokens =
+            (this.usage.cacheReadTokens ?? 0) + (u.cache_read_input_tokens ?? 0)
+          this.usage.outputTokens += u.output_tokens ?? 0
+          // Anthropic doesn't split thinking out — output_tokens already
+          // includes thinking blocks. Leave thinkingTokens unset.
+          this.usage.totalTokens =
+            this.usage.inputTokens +
+            (this.usage.cacheCreationTokens ?? 0) +
+            (this.usage.cacheReadTokens ?? 0) +
+            this.usage.outputTokens +
+            (this.usage.thinkingTokens ?? 0)
         }
         this.rotateToken()
         return response.content
