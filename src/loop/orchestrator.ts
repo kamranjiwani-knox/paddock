@@ -346,13 +346,24 @@ export class EvalOrchestrator {
         for (const [model, usage] of Object.entries(trace.agentTokenUsage)) {
           const key = `agent/${model}`
           const existing = this.state.tokenUsage[key]
-          this.state.tokenUsage[key] = existing
-            ? {
-                inputTokens: existing.inputTokens + usage.inputTokens,
-                outputTokens: existing.outputTokens + usage.outputTokens,
-                totalTokens: existing.totalTokens + usage.totalTokens,
-              }
-            : { ...usage }
+          if (existing) {
+            existing.inputTokens += usage.inputTokens
+            existing.outputTokens += usage.outputTokens
+            existing.cacheCreationTokens =
+              (existing.cacheCreationTokens ?? 0) + (usage.cacheCreationTokens ?? 0)
+            existing.cacheReadTokens =
+              (existing.cacheReadTokens ?? 0) + (usage.cacheReadTokens ?? 0)
+            existing.thinkingTokens =
+              (existing.thinkingTokens ?? 0) + (usage.thinkingTokens ?? 0)
+            existing.totalTokens =
+              existing.inputTokens +
+              (existing.cacheCreationTokens ?? 0) +
+              (existing.cacheReadTokens ?? 0) +
+              existing.outputTokens +
+              (existing.thinkingTokens ?? 0)
+          } else {
+            this.state.tokenUsage[key] = { ...usage }
+          }
         }
       }
 

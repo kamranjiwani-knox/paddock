@@ -91,12 +91,28 @@ export class GeminiJudgeProvider implements JudgeProvider {
 
     const data = await res.json() as {
       candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
-      usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number }
+      usageMetadata?: {
+        promptTokenCount?: number
+        candidatesTokenCount?: number
+        thoughtsTokenCount?: number
+        totalTokenCount?: number
+      }
     }
     if (data.usageMetadata) {
-      this.usage.inputTokens += data.usageMetadata.promptTokenCount ?? 0
-      this.usage.outputTokens += data.usageMetadata.candidatesTokenCount ?? 0
-      this.usage.totalTokens += data.usageMetadata.totalTokenCount ?? 0
+      const u = data.usageMetadata
+      this.usage.inputTokens += u.promptTokenCount ?? 0
+      this.usage.outputTokens += u.candidatesTokenCount ?? 0
+      // Gemini exposes reasoning ("thoughts") tokens in a separate counter —
+      // sum into thinkingTokens so the cost report doesn't drop the entire
+      // thinking spend (often 5-10K tokens per judge call at thinking depth).
+      this.usage.thinkingTokens = (this.usage.thinkingTokens ?? 0) + (u.thoughtsTokenCount ?? 0)
+      // Recompute total locally — Gemini's totalTokenCount sometimes includes
+      // thoughts and sometimes doesn't depending on model version, so derive
+      // it deterministically from the parts.
+      this.usage.totalTokens =
+        this.usage.inputTokens +
+        this.usage.outputTokens +
+        (this.usage.thinkingTokens ?? 0)
     }
     return data.candidates?.[0]?.content?.parts?.[0]?.text ?? ""
   }
