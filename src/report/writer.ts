@@ -100,18 +100,37 @@ function buildMarkdownReport(state: LoopState): string {
     "",
   ]
 
-  // Token usage
+  // Token usage — show cache + thinking breakdown when present so totals
+  // reconcile with the per-row sums. Cache and Thinking columns render "—"
+  // when zero so simple non-cached / non-thinking judges stay readable.
   const providers = Object.entries(state.tokenUsage)
   if (providers.length > 0) {
-    lines.push("## Token Usage", "", "| Provider | Input | Output | Total |", "|----------|-------|--------|-------|")
-    let grandIn = 0, grandOut = 0
+    const fmt = (n: number) => n.toLocaleString()
+    const cacheCell = (r: number, w: number) => (r === 0 && w === 0 ? "—" : `${fmt(r)} / ${fmt(w)}`)
+    const outCell = (out: number, think: number) => (think === 0 ? fmt(out) : `${fmt(out)} / ${fmt(think)}`)
+    lines.push(
+      "## Token Usage",
+      "",
+      "Cache column = `cache_read / cache_write`. Output column = `visible / thinking` when the provider exposes thinking separately.",
+      "",
+      "| Provider | Input | Cache | Output | Total |",
+      "|----------|-------|-------|--------|-------|",
+    )
+    let gIn = 0, gCacheR = 0, gCacheW = 0, gOut = 0, gThink = 0, gTotal = 0
     for (const [key, u] of providers) {
-      lines.push(`| ${key} | ${u.inputTokens.toLocaleString()} | ${u.outputTokens.toLocaleString()} | ${u.totalTokens.toLocaleString()} |`)
-      grandIn += u.inputTokens
-      grandOut += u.outputTokens
+      const cR = u.cacheReadTokens ?? 0
+      const cW = u.cacheCreationTokens ?? 0
+      const th = u.thinkingTokens ?? 0
+      lines.push(`| ${key} | ${fmt(u.inputTokens)} | ${cacheCell(cR, cW)} | ${outCell(u.outputTokens, th)} | ${fmt(u.totalTokens)} |`)
+      gIn += u.inputTokens
+      gCacheR += cR
+      gCacheW += cW
+      gOut += u.outputTokens
+      gThink += th
+      gTotal += u.totalTokens
     }
     if (providers.length > 1) {
-      lines.push(`| **Total** | **${grandIn.toLocaleString()}** | **${grandOut.toLocaleString()}** | **${(grandIn + grandOut).toLocaleString()}** |`)
+      lines.push(`| **Total** | **${fmt(gIn)}** | **${cacheCell(gCacheR, gCacheW)}** | **${outCell(gOut, gThink)}** | **${fmt(gTotal)}** |`)
     }
     lines.push("")
   }
