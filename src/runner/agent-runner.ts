@@ -352,9 +352,13 @@ export class AgentRunner {
       // Give fire-and-forget tasks a moment to settle (heartbeat, session writes)
       await sleep(3000)
 
-      // Token capture, runtime stop, and env restore moved to the `finally`
-      // block below so the failed-scenario path also captures partial usage
-      // and cleans up. See captureTokens() defined at the top of this method.
+      // Capture tokens HERE on the happy path (not just in finally). JS
+      // evaluates the return-value expression BEFORE running finally, so
+      // agentTokenUsage would still be undefined at the moment the trace
+      // object is built if we relied on finally alone. The finally block
+      // still calls captureTokens() defensively for the failed-scenario
+      // path; this is idempotent (re-reads the in-memory accumulator).
+      captureTokens()
 
       // Record any unhandled rejections as errors
       for (const rejection of caughtRejections) {
@@ -392,6 +396,11 @@ export class AgentRunner {
         phase: "runtime",
       })
 
+      // Same reason as the success branch — JS evaluates the return-value
+      // expression BEFORE finally fires, so capture explicitly here so the
+      // failed-scenario trace carries whatever tokens accumulated before the
+      // throw.
+      captureTokens()
       return {
         scenarioId: scenario.id,
         responses,
@@ -399,10 +408,6 @@ export class AgentRunner {
         errors,
         timing: { startedAt, endedAt: Date.now(), totalMs: Date.now() - startedAt },
         metadata: { agentDir: tempDir, soulMd: "", configJson: "{}", toolNames: [] },
-        // Tokens captured in finally before this return runs (return-then-finally
-        // semantics in JS guarantee finally executes before the function actually
-        // resolves). If the agent made N LLM calls before throwing, those tokens
-        // ARE attributed to the failed scenario instead of vanishing.
         ...(agentTokenUsage ? { agentTokenUsage } : {}),
       }
     } finally {
