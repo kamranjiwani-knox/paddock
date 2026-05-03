@@ -1,5 +1,5 @@
 import { join } from "path"
-import { mkdirSync, readdirSync, readFileSync, existsSync } from "fs"
+import { mkdirSync, readdirSync, readFileSync, existsSync, writeFileSync } from "fs"
 import type { LoopState, LastReportData, Verdict } from "../types"
 
 export interface ReportResult {
@@ -34,10 +34,10 @@ export function saveReport(repoRoot: string, state: LoopState): ReportResult {
   const { json, md } = buildReport(state)
 
   const jsonPath = join(reportsDir, `${baseName}.json`)
-  Bun.write(jsonPath, JSON.stringify(json, null, 2))
+  writeFileSync(jsonPath, JSON.stringify(json, null, 2))
 
   const mdPath = join(reportsDir, `${baseName}.md`)
-  Bun.write(mdPath, md)
+  writeFileSync(mdPath, md)
 
   return { jsonPath, mdPath }
 }

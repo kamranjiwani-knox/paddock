@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, cpSync, rmSync, readFileSync } from "fs"
+import { existsSync, mkdirSync, cpSync, rmSync, readFileSync, writeFileSync } from "fs"
 import { join, resolve } from "path"
 import { MockChannel } from "./mock-channel"
 import type { IAgentRunner } from "./types"
@@ -194,7 +194,7 @@ export class AgentRunner implements IAgentRunner {
           const fullPath = join(tempDir, path)
           const dir = fullPath.substring(0, fullPath.lastIndexOf("/"))
           mkdirSync(dir, { recursive: true })
-          Bun.write(fullPath, content)
+          writeFileSync(fullPath, content)
         }
       }
 
@@ -205,9 +205,9 @@ export class AgentRunner implements IAgentRunner {
           ? JSON.parse(readFileSync(configPath, "utf-8"))
           : {}
         agentConfig.accessStrategy = "open"
-        Bun.write(configPath, JSON.stringify(agentConfig, null, 2))
+        writeFileSync(configPath, JSON.stringify(agentConfig, null, 2))
       } catch {
-        Bun.write(configPath, JSON.stringify({ accessStrategy: "open" }, null, 2))
+        writeFileSync(configPath, JSON.stringify({ accessStrategy: "open" }, null, 2))
       }
 
       // Read SOUL.md and config snapshots
