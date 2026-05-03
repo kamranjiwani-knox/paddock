@@ -134,19 +134,25 @@ function buildMarkdownReport(state: LoopState): string {
     lines.push("")
   }
 
+  // Lookup map for scenario metadata (name, category, difficulty)
+  const scenarioById = new Map(state.scenarios.map(s => [s.id, s]))
+
   // Results table
   lines.push(
     "## Results",
     "",
-    "| Verdict | Scenario | Score | Agreement |",
-    "|---------|----------|-------|-----------|",
+    "| Verdict | Scenario | Category | Score | Agreement |",
+    "|---------|----------|----------|-------|-----------|",
   )
   for (const e of state.evaluations) {
     const icon = e.finalVerdict === "pass" ? "PASS"
       : e.finalVerdict === "partial" ? "PARTIAL"
       : e.finalVerdict === "skipped" ? "SKIPPED"
       : "FAIL"
-    lines.push(`| ${icon} | ${e.scenarioId} | ${e.finalScore.toFixed(1)}/10 | ${(e.agreement * 100).toFixed(0)}% |`)
+    const s = scenarioById.get(e.scenarioId)
+    const name = s?.name ?? e.scenarioId
+    const category = s?.category ?? "—"
+    lines.push(`| ${icon} | ${name} | ${category} | ${e.finalScore.toFixed(1)}/10 | ${(e.agreement * 100).toFixed(0)}% |`)
   }
 
   // Details for non-pass scenarios
@@ -154,7 +160,15 @@ function buildMarkdownReport(state: LoopState): string {
   if (nonPass.length > 0) {
     lines.push("", "## Details", "")
     for (const e of nonPass) {
-      lines.push(`### ${e.scenarioId} (${e.finalVerdict} — ${e.finalScore.toFixed(1)}/10)`, "")
+      const s = scenarioById.get(e.scenarioId)
+      const heading = s?.name ?? e.scenarioId
+      const meta = s ? ` _(${s.category} · ${s.difficulty})_` : ""
+      lines.push(
+        `### ${heading} (${e.finalVerdict} — ${e.finalScore.toFixed(1)}/10)${meta}`,
+        "",
+        `\`${e.scenarioId}\``,
+        "",
+      )
       for (const j of e.judges) {
         lines.push(`**${j.judgeModel}** (${j.overallScore.toFixed(1)}/10):`)
         for (const [dim, text] of Object.entries(j.reasoning)) {
