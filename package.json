@@ -26,10 +26,9 @@
     "eval": "bun run src/cli.ts run",
     "eval:quick": "bun run src/cli.ts run --count 3",
     "eval:full": "bun run src/cli.ts run --full",
-    "eval:improve": "bun run src/cli.ts run --improve",
     "eval:category": "bun run src/cli.ts run --categories",
     "scenarios": "bun run src/cli.ts scenarios",
-    "mcp": "bun run src/index.ts",
+    "mcp": "bun run src/mcp.ts",
     "typecheck": "bunx tsc --noEmit"
   },
   "dependencies": {
