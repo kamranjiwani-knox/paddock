@@ -149,6 +149,7 @@ async function handleEvalRun(args: Record<string, unknown>): Promise<string> {
     maxLlmCalls: (typeof fileConfig.maxLlmCalls === "number" ? fileConfig.maxLlmCalls : 100),
     blockedTools: (Array.isArray(fileConfig.blockedTools) ? fileConfig.blockedTools as string[] : DEFAULT_BLOCKED_TOOLS),
     fullRun: (args.fullRun as boolean) ?? false,
+    concurrency: (args.concurrency as number) ?? (typeof fileConfig.concurrency === "number" ? fileConfig.concurrency : 1),
   }
 
   activeOrchestrator = new EvalOrchestrator(config)

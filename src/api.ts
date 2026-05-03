@@ -54,6 +54,8 @@ export interface RunEvaluationOptions {
   maxLlmCalls?: number
   blockedTools?: string[]
   fullRun?: boolean
+  /** Max concurrent scenarios (default: 1 = sequential). Only meaningful for the default FilesystemAgentRunner. */
+  concurrency?: number
 }
 
 export interface RunEvaluationResult {
@@ -89,6 +91,7 @@ export async function runEvaluation(opts: RunEvaluationOptions): Promise<RunEval
     maxLlmCalls: opts.maxLlmCalls ?? 100,
     blockedTools: opts.blockedTools ?? DEFAULT_BLOCKED_TOOLS,
     fullRun: opts.fullRun ?? false,
+    concurrency: opts.concurrency ?? 1,
   }
 
   const deps: EvalOrchestratorDeps = {

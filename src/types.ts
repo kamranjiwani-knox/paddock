@@ -178,6 +178,7 @@ export interface EvalConfig {
   maxLlmCalls: number
   blockedTools: string[]
   fullRun: boolean             // skip rerun logic, eval all scenarios fresh
+  concurrency: number          // max concurrent scenarios (default: 1 = sequential)
 }
 
 export interface JudgeProviderConfig {
@@ -216,4 +217,5 @@ export const DEFAULT_EVAL_CONFIG: Omit<EvalConfig, "repoRoot" | "agentDir" | "ju
   maxLlmCalls: 100,
   blockedTools: DEFAULT_BLOCKED_TOOLS,
   fullRun: false,
+  concurrency: 1,
 }

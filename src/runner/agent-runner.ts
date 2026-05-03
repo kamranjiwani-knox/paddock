@@ -27,6 +27,8 @@ interface AgentRunnerConfig {
   retryDelayMs?: number
   /** Delay between scenarios in ms (default: 2000) */
   scenarioDelayMs?: number
+  /** Max concurrent scenarios (default: 1 = sequential) */
+  concurrency?: number
 }
 
 const DEFAULT_BLOCKED_TOOLS = [
@@ -129,6 +131,7 @@ export class AgentRunner implements IAgentRunner {
       maxRetries: config.maxRetries ?? 2,
       retryDelayMs: config.retryDelayMs ?? 5_000,
       scenarioDelayMs: config.scenarioDelayMs ?? 2_000,
+      concurrency: config.concurrency ?? 1,
     }
   }
 
@@ -212,11 +215,24 @@ export class AgentRunner implements IAgentRunner {
       const soulMd = existsSync(soulMdPath) ? readFileSync(soulMdPath, "utf-8") : ""
       const configJson = existsSync(configPath) ? readFileSync(configPath, "utf-8") : "{}"
 
-      // Dynamic import of runtime modules
+      // Dynamic import of runtime modules — try current paths first, fall back to legacy
       const runtimePath = this.config.repoRoot
+
       const { AgentRuntime } = await import(join(runtimePath, "src/runtime.ts"))
-      const { InitModule } = await import(join(runtimePath, "src/slices/runtime/init/init.module.ts"))
-      const { ToolGateway } = await import(join(runtimePath, "src/slices/agent/tool/data/tool.gateway.ts"))
+
+      let InitModule: any
+      try {
+        ;({ InitModule } = await import(join(runtimePath, "src/slices/runtime/init/init.module.ts")))
+      } catch {
+        ;({ InitModule } = await import(join(runtimePath, "src/slices/agent/init/init.module.ts")))
+      }
+
+      let ToolGateway: any
+      try {
+        ;({ ToolGateway } = await import(join(runtimePath, "src/slices/agent/tool/data/tool.gateway.ts")))
+      } catch {
+        ;({ ToolGateway } = await import(join(runtimePath, "src/slices/setup/tool/data/tool.gateway.ts")))
+      }
 
       // Create mock channel
       const mockChannel = new MockChannel()
@@ -351,6 +367,17 @@ export class AgentRunner implements IAgentRunner {
   }
 
   async runSuite(scenarios: Scenario[]): Promise<ExecutionTrace[]> {
+    const concurrency = this.config.concurrency
+
+    if (concurrency <= 1) {
+      return this.runSuiteSequential(scenarios)
+    }
+
+    console.log(`[paddock] running ${scenarios.length} scenarios with concurrency=${concurrency}`)
+    return this.runSuiteParallel(scenarios, concurrency)
+  }
+
+  private async runSuiteSequential(scenarios: Scenario[]): Promise<ExecutionTrace[]> {
     const traces: ExecutionTrace[] = []
 
     for (let i = 0; i < scenarios.length; i++) {
@@ -361,35 +388,60 @@ export class AgentRunner implements IAgentRunner {
         await sleep(this.config.scenarioDelayMs)
       }
 
-      console.log(`[paddock] running scenario ${i + 1}/${scenarios.length}: ${scenario.id} (${scenario.category}/${scenario.difficulty})`)
-
-      try {
-        const trace = await this.runScenario(scenario)
-        traces.push(trace)
-        const status = trace.errors.length === 0 ? "OK" : `${trace.errors.length} errors`
-        console.log(`[paddock] scenario ${scenario.id}: ${status} | ${trace.responses.length} responses | ${trace.toolCalls.length} tool calls | ${trace.timing.totalMs}ms`)
-        // Log errors for debugging
-        for (const err of trace.errors) {
-          console.log(`[paddock]   ERROR [${err.phase}]: ${err.message.slice(0, 200)}`)
-        }
-      } catch (err) {
-        // Never let a single scenario crash the suite
-        console.error(`[paddock] scenario ${scenario.id} crashed: ${err}`)
-        traces.push({
-          scenarioId: scenario.id,
-          responses: [],
-          toolCalls: [],
-          errors: [{
-            message: err instanceof Error ? err.message : String(err),
-            ts: Date.now(),
-            phase: "runtime",
-          }],
-          timing: { startedAt: Date.now(), endedAt: Date.now(), totalMs: 0 },
-          metadata: { agentDir: "", soulMd: "", configJson: "{}", toolNames: [] },
-        })
-      }
+      traces.push(await this.runAndLog(scenario, i + 1, scenarios.length))
     }
 
     return traces
+  }
+
+  private async runSuiteParallel(scenarios: Scenario[], concurrency: number): Promise<ExecutionTrace[]> {
+    const traces: ExecutionTrace[] = new Array(scenarios.length)
+    let nextIndex = 0
+
+    const worker = async () => {
+      while (nextIndex < scenarios.length) {
+        const idx = nextIndex++
+        const scenario = scenarios[idx]
+
+        // Jitter to stagger starts and avoid thundering herd
+        const jitter = Math.random() * this.config.scenarioDelayMs
+        await sleep(jitter)
+
+        traces[idx] = await this.runAndLog(scenario, idx + 1, scenarios.length)
+      }
+    }
+
+    const workers = Array.from({ length: Math.min(concurrency, scenarios.length) }, () => worker())
+    await Promise.all(workers)
+
+    return traces
+  }
+
+  private async runAndLog(scenario: Scenario, num: number, total: number): Promise<ExecutionTrace> {
+    console.log(`[paddock] running scenario ${num}/${total}: ${scenario.id} (${scenario.category}/${scenario.difficulty})`)
+
+    try {
+      const trace = await this.runScenario(scenario)
+      const status = trace.errors.length === 0 ? "OK" : `${trace.errors.length} errors`
+      console.log(`[paddock] scenario ${scenario.id}: ${status} | ${trace.responses.length} responses | ${trace.toolCalls.length} tool calls | ${trace.timing.totalMs}ms`)
+      for (const err of trace.errors) {
+        console.log(`[paddock]   ERROR [${err.phase}]: ${err.message.slice(0, 200)}`)
+      }
+      return trace
+    } catch (err) {
+      console.error(`[paddock] scenario ${scenario.id} crashed: ${err}`)
+      return {
+        scenarioId: scenario.id,
+        responses: [],
+        toolCalls: [],
+        errors: [{
+          message: err instanceof Error ? err.message : String(err),
+          ts: Date.now(),
+          phase: "runtime",
+        }],
+        timing: { startedAt: Date.now(), endedAt: Date.now(), totalMs: 0 },
+        metadata: { agentDir: "", soulMd: "", configJson: "{}", toolNames: [] },
+      }
+    }
   }
 }
