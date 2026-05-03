@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, cpSync, rmSync, readFileSync } from "fs"
 import { join, resolve } from "path"
 import { MockChannel } from "./mock-channel"
+import type { IAgentRunner } from "./types"
 import type {
   Scenario,
   ExecutionTrace,
@@ -108,7 +109,14 @@ function isRetryable(err: unknown): boolean {
   return false
 }
 
-export class AgentRunner {
+/**
+ * Boots the agent runtime in-process by importing from a local repo path,
+ * runs scenarios via a MockChannel, and captures traces.
+ *
+ * Used by paddock CLI/MCP for standalone (filesystem) projects. For ranch
+ * agents (DB-driven, server-hosted) use HttpAgentRunner instead.
+ */
+export class AgentRunner implements IAgentRunner {
   private config: Required<AgentRunnerConfig>
 
   constructor(config: AgentRunnerConfig) {
@@ -207,7 +215,7 @@ export class AgentRunner {
       // Dynamic import of runtime modules
       const runtimePath = this.config.repoRoot
       const { AgentRuntime } = await import(join(runtimePath, "src/runtime.ts"))
-      const { InitModule } = await import(join(runtimePath, "src/slices/agent/init/init.module.ts"))
+      const { InitModule } = await import(join(runtimePath, "src/slices/runtime/init/init.module.ts"))
       const { ToolGateway } = await import(join(runtimePath, "src/slices/agent/tool/data/tool.gateway.ts"))
 
       // Create mock channel

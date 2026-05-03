@@ -29,7 +29,7 @@ function buildJudgeConfigs(): JudgeProviderConfig[] {
 export const TOOL_DEFINITIONS = [
   {
     name: "eval_run",
-    description: "Run a full eval cycle: generate scenarios, run agent, evaluate with multi-model consensus, and optionally improve code iteratively",
+    description: "Run an eval cycle: generate scenarios, run agent, evaluate with multi-model consensus",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -44,10 +44,7 @@ export const TOOL_DEFINITIONS = [
           description: "Difficulty levels: easy, medium, hard, adversarial",
         },
         scenarioCount: { type: "number", description: "Number of scenarios (default: 10)" },
-        maxIterations: { type: "number", description: "Max improvement iterations (default: 5)" },
         passThreshold: { type: "number", description: "Pass rate threshold 0-1 (default: 0.8)" },
-        autoImprove: { type: "boolean", description: "Auto-improve on failures (default: true)" },
-        autoPush: { type: "boolean", description: "Push to git on success (default: true)" },
         fullRun: { type: "boolean", description: "Run all scenarios fresh, ignore last report (default: false — rerun failed/partial/new only)" },
       },
       required: ["repoRoot"],
@@ -148,13 +145,8 @@ async function handleEvalRun(args: Record<string, unknown>): Promise<string> {
     scenarioCount: (args.scenarioCount as number) ?? (typeof fileConfig.scenarioCount === "number" ? fileConfig.scenarioCount : 10),
     passThreshold: (args.passThreshold as number) ?? (typeof fileConfig.passThreshold === "number" ? fileConfig.passThreshold : 0.8),
     judges,
-    autoImprove: (args.autoImprove as boolean) ?? true,
-    maxIterations: (args.maxIterations as number) ?? (typeof fileConfig.maxIterations === "number" ? fileConfig.maxIterations : 5),
     maxTimeMs: (typeof fileConfig.maxTimeMs === "number" ? fileConfig.maxTimeMs : 30 * 60 * 1000),
     maxLlmCalls: (typeof fileConfig.maxLlmCalls === "number" ? fileConfig.maxLlmCalls : 100),
-    autoPush: (args.autoPush as boolean) ?? true,
-    useBranch: (args.useBranch as boolean) ?? false,
-    branchPrefix: "paddock",
     blockedTools: (Array.isArray(fileConfig.blockedTools) ? fileConfig.blockedTools as string[] : DEFAULT_BLOCKED_TOOLS),
     fullRun: (args.fullRun as boolean) ?? false,
   }
@@ -178,7 +170,6 @@ async function handleEvalRun(args: Record<string, unknown>): Promise<string> {
       judges: judges.map(j => j.type),
       scenarioCount: config.scenarioCount,
       passThreshold: config.passThreshold,
-      autoImprove: config.autoImprove,
     },
   })
 }
@@ -192,12 +183,9 @@ function handleEvalStatus(): string {
   return JSON.stringify({
     id: state.id,
     phase: state.phase,
-    iteration: state.iteration,
     passRate: `${(state.passRate * 100).toFixed(0)}%`,
     scenarios: state.scenarios.length,
     evaluations: state.evaluations.length,
-    improvements: state.improvements.length,
-    branch: state.branchName,
     error: state.error ?? null,
     budget: state.budget,
   })
@@ -221,8 +209,6 @@ function handleEvalReport(args: Record<string, unknown>): string {
     ``,
     `Phase: ${state.phase}`,
     `Pass rate: ${(state.passRate * 100).toFixed(0)}%`,
-    `Iterations: ${state.iteration}`,
-    `Branch: ${state.branchName}`,
     ``,
   ]
 
@@ -240,14 +226,6 @@ function handleEvalReport(args: Record<string, unknown>): string {
           lines.push(`  - ${typeof r === "string" ? r.slice(0, 120) : JSON.stringify(r).slice(0, 120)}`)
         }
       }
-    }
-  }
-
-  if (state.improvements.length > 0) {
-    lines.push(``)
-    lines.push(`## Improvements Applied`)
-    for (const imp of state.improvements) {
-      lines.push(`- ${imp.estimatedImpact} (${imp.patches.length} patches, risk: ${imp.riskLevel})`)
     }
   }
 

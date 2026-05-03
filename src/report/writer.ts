@@ -7,18 +7,37 @@ export interface ReportResult {
   mdPath: string
 }
 
+export interface ReportPayload {
+  /** Structured JSON payload (already-shaped object, not stringified). */
+  json: object
+  /** Human-readable markdown report. */
+  md: string
+}
+
+/**
+ * Build report payloads in memory without writing to disk.
+ * Use this when embedding paddock as a library (e.g. ranch persists to S3/DB).
+ */
+export function buildReport(state: LoopState): ReportPayload {
+  return {
+    json: buildJsonReport(state),
+    md: buildMarkdownReport(state),
+  }
+}
+
 export function saveReport(repoRoot: string, state: LoopState): ReportResult {
   const reportsDir = join(repoRoot, ".paddock", "reports")
   mkdirSync(reportsDir, { recursive: true })
 
   const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)
   const baseName = `eval-${ts}`
+  const { json, md } = buildReport(state)
 
   const jsonPath = join(reportsDir, `${baseName}.json`)
-  Bun.write(jsonPath, JSON.stringify(buildJsonReport(state), null, 2))
+  Bun.write(jsonPath, JSON.stringify(json, null, 2))
 
   const mdPath = join(reportsDir, `${baseName}.md`)
-  Bun.write(mdPath, buildMarkdownReport(state))
+  Bun.write(mdPath, md)
 
   return { jsonPath, mdPath }
 }
@@ -61,7 +80,6 @@ function buildJsonReport(state: LoopState): object {
     timestamp: new Date().toISOString(),
     phase: state.phase,
     passRate: state.passRate,
-    iteration: state.iteration,
     scenarioCount: state.evaluations.length,
     allScenarioIds: state.scenarios.map(s => s.id),
     tokenUsage: state.tokenUsage,
