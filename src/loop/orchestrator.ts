@@ -263,7 +263,11 @@ export class EvalOrchestrator {
     let templates = loadScenarios(this.config.repoRoot)
 
     if (this.config.scenarioIds) {
-      templates = templates.filter(s => this.config.scenarioIds!.includes(s.id))
+      const wanted = this.config.scenarioIds
+      const orderById = new Map(wanted.map((id, i) => [id, i]))
+      templates = templates
+        .filter(s => orderById.has(s.id))
+        .sort((a, b) => (orderById.get(a.id) ?? 0) - (orderById.get(b.id) ?? 0))
     }
     if (this.config.categories) {
       templates = templates.filter(s => this.config.categories!.includes(s.category))
