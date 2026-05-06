@@ -1,18 +1,8 @@
 #!/usr/bin/env bun
 import { parseArgs } from "util"
 import { resolve } from "path"
-import { AgentRunner } from "./runner/agent-runner"
 import { loadScenarios, loadPaddockConfig } from "./scenario/loader"
-import { ConsensusEngine } from "./evaluator/consensus"
-import { Judge } from "./evaluator/judge"
-import { createJudgeProvider } from "./evaluator/providers/factory"
-import { FailureAnalyzer } from "./improver/analyzer"
-import { Patcher } from "./improver/patcher"
-import { Sandbox } from "./improver/sandbox"
-import { BranchManager } from "./git/branch-manager"
-import { BudgetTracker } from "./loop/budget"
 import { EvalOrchestrator } from "./loop/orchestrator"
-import { ScenarioGenerator } from "./scenario/generator"
 import { saveReport } from "./report/writer"
 import { formatTokenUsage } from "./report/formatter"
 import type { EvalConfig, JudgeProviderConfig, ScenarioCategory, Difficulty } from "./types"
@@ -53,12 +43,8 @@ ${bold("Options for 'run':")}
   --scenarios      Comma-separated scenario IDs to run (e.g. error-tool-error-loop,memory-recall)
   --count          Number of scenarios (default: 10)
   --threshold      Pass rate 0-1 (default: 0.8)
-  --max-iter       Max improvement iterations (default: 5)
-  --improve        Enable auto-improve loop on failures (default: off)
   --full           Run all scenarios fresh, ignore last report (default: rerun failed/partial/new only)
-  --no-push        Don't push to git
   --no-generate    Use only built-in templates, skip LLM generation
-  --branch         Create separate git branch and commit (default: off, stays on current branch)
   --concurrency N  Max concurrent scenarios (default: 1 = sequential)
 
 ${bold("Options for 'scenarios':")}
@@ -145,12 +131,8 @@ async function cmdRun(args: string[]) {
       scenarios: { type: "string" },
       count: { type: "string", default: "10" },
       threshold: { type: "string", default: "0.8" },
-      "max-iter": { type: "string", default: "5" },
-      "improve": { type: "boolean", default: false },
       "full": { type: "boolean", default: false },
-      "no-push": { type: "boolean", default: false },
       "no-generate": { type: "boolean", default: false },
-      branch: { type: "boolean", default: false },
       concurrency: { type: "string", default: "1" },
     },
     strict: false,
@@ -191,11 +173,6 @@ async function cmdRun(args: string[]) {
     ? parseFloat(String(values.threshold))
     : (typeof fileConfig.passThreshold === "number" ? fileConfig.passThreshold : 0.8)
 
-  const cliMaxIterExplicit = args.includes("--max-iter")
-  const maxIterations = cliMaxIterExplicit
-    ? parseInt(String(values["max-iter"]))
-    : (typeof fileConfig.maxIterations === "number" ? fileConfig.maxIterations : 5)
-
   const config: EvalConfig = {
     repoRoot,
     agentDir,
@@ -205,13 +182,8 @@ async function cmdRun(args: string[]) {
     scenarioCount,
     passThreshold,
     judges: judgeConfigs,
-    autoImprove: !!values["improve"],
-    maxIterations,
     maxTimeMs: (typeof fileConfig.maxTimeMs === "number" ? fileConfig.maxTimeMs : 30 * 60 * 1000),
     maxLlmCalls: (typeof fileConfig.maxLlmCalls === "number" ? fileConfig.maxLlmCalls : 100),
-    autoPush: !values["no-push"],
-    useBranch: !!values.branch,
-    branchPrefix: "paddock",
     blockedTools: (Array.isArray(fileConfig.blockedTools) ? fileConfig.blockedTools as string[] : DEFAULT_BLOCKED_TOOLS),
     fullRun: !!values["full"],
     concurrency: parseInt(String(values.concurrency)) || (typeof fileConfig.concurrency === "number" ? fileConfig.concurrency : 1),
@@ -223,9 +195,7 @@ async function cmdRun(args: string[]) {
   console.log(`  ${dim("Categories:")} ${categories?.join(", ") ?? "all"}`)
   console.log(`  ${dim("Scenarios:")}  ${config.scenarioCount}`)
   console.log(`  ${dim("Threshold:")}  ${(config.passThreshold * 100).toFixed(0)}%`)
-  console.log(`  ${dim("Improve:")}    ${config.autoImprove ? "yes" : "no"}`)
   console.log(`  ${dim("Mode:")}       ${config.fullRun ? "full (all scenarios)" : "rerun (failed/partial/new only)"}`)
-  console.log(`  ${dim("Branch:")}     ${config.useBranch ? "yes (separate branch)" : "no (current branch)"}`)
   if (config.concurrency > 1) {
     console.log(`  ${dim("Concurrency:")} ${config.concurrency}`)
   }
@@ -239,9 +209,8 @@ async function cmdRun(args: string[]) {
   console.log(bold("  Results"))
   console.log()
   console.log(`  ${dim("Phase:")}     ${state.phase}`)
-  console.log(`  ${dim("Pass rate:")} ${state.passRate >= config.passThreshold ? green : red}(${(state.passRate * 100).toFixed(0)}%)`)
-  console.log(`  ${dim("Iterations:")} ${state.iteration}`)
-  console.log(`  ${dim("Branch:")}    ${state.branchName}`)
+  const rateColor = state.passRate >= config.passThreshold ? green : red
+  console.log(`  ${dim("Pass rate:")} ${rateColor((state.passRate * 100).toFixed(0) + "%")}`)
 
   // Token usage per judge. With cache + thinking breakdown enabled, each
   // line shows: <input> in [+ <cache_read>r/<cache_write>w cached] / <output> out

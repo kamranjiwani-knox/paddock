@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/cleanslice-paddock-background.png" alt="Paddock" />
+</p>
+
 # Paddock
 
 Automated eval & improvement loop for AI agents. Generates test scenarios, runs the agent, scores with multi-model consensus (Claude + GPT + Gemini), and iteratively patches code until quality targets are met.

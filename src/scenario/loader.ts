@@ -223,12 +223,21 @@ function loadScenarioFile(filePath: string): Scenario | null {
 
 /**
  * Recursively find all .yml files in a directory.
+ *
+ * Returns paths in a deterministic alphabetical order. readdirSync makes no
+ * order guarantees — tmpfs returns insertion order, ext4/xfs may return
+ * hash-bucket order — so callers that prefix filenames for sequencing
+ * (e.g. `01-foo.yaml`, `02-bar.yaml`) need this sort to make their scheme
+ * actually take effect.
  */
 function findYmlFiles(dir: string): string[] {
   const files: string[] = []
   if (!existsSync(dir)) return files
 
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+  const entries = readdirSync(dir, { withFileTypes: true })
+  entries.sort((a, b) => a.name.localeCompare(b.name))
+
+  for (const entry of entries) {
     const fullPath = join(dir, entry.name)
     if (entry.isDirectory()) {
       files.push(...findYmlFiles(fullPath))

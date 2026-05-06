@@ -168,37 +168,6 @@ export interface JudgeProvider {
   complete(prompt: string | JudgePrompt): Promise<string>
 }
 
-// ─── Improvement ─────────────────────────────────────────────
-
-export interface FailurePattern {
-  dimension: EvalDimension
-  frequency: number
-  severity: number
-  exampleScenarios: string[]
-  suggestedFix: string
-}
-
-export interface Patch {
-  filePath: string
-  operation: "modify" | "create" | "append"
-  content: string
-  description: string
-  rationale: string
-}
-
-export interface ImprovementPlan {
-  id: string
-  targetFailures: string[]
-  patches: Patch[]
-  estimatedImpact: string
-  riskLevel: "low" | "medium" | "high"
-}
-
-export interface SandboxResult {
-  ok: boolean
-  errors: string[]
-}
-
 // ─── Loop State ──────────────────────────────────────────────
 
 export type LoopPhase =
@@ -206,25 +175,17 @@ export type LoopPhase =
   | "generating_scenarios"
   | "running_agent"
   | "evaluating"
-  | "improving"
-  | "verifying"
-  | "committing"
   | "done"
   | "failed"
 
 export interface LoopState {
   id: string
   phase: LoopPhase
-  branchName: string
-  iteration: number
-  maxIterations: number
   scenarios: Scenario[]
   traces: ExecutionTrace[]
   evaluations: ConsensusResult[]
-  improvements: ImprovementPlan[]
   budget: Budget
   passRate: number
-  previousPassRate?: number
   tokenUsage: Record<string, TokenUsage>
   startedAt: number
   updatedAt: number
@@ -232,10 +193,8 @@ export interface LoopState {
 }
 
 export interface Budget {
-  maxIterations: number
   maxTimeMs: number
   maxLlmCalls: number
-  currentIterations: number
   currentTimeMs: number
   currentLlmCalls: number
 }
@@ -251,13 +210,8 @@ export interface EvalConfig {
   scenarioCount: number
   passThreshold: number
   judges: JudgeProviderConfig[]
-  autoImprove: boolean
-  maxIterations: number
   maxTimeMs: number
   maxLlmCalls: number
-  autoPush: boolean
-  useBranch: boolean         // create separate git branch for eval (default: false)
-  branchPrefix: string
   blockedTools: string[]
   fullRun: boolean             // skip rerun logic, eval all scenarios fresh
   concurrency: number          // max concurrent scenarios (default: 1 = sequential)
@@ -295,13 +249,9 @@ export interface LastReportData {
 export const DEFAULT_EVAL_CONFIG: Omit<EvalConfig, "repoRoot" | "agentDir" | "judges"> = {
   scenarioCount: 10,
   passThreshold: 0.8,
-  autoImprove: true,
-  maxIterations: 5,
   maxTimeMs: 30 * 60 * 1000,
   maxLlmCalls: 100,
-  autoPush: true,
-  useBranch: false,
-  branchPrefix: "paddock",
   blockedTools: DEFAULT_BLOCKED_TOOLS,
   fullRun: false,
+  concurrency: 1,
 }

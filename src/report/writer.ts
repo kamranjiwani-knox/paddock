@@ -1,10 +1,28 @@
 import { join } from "path"
-import { mkdirSync, readdirSync, readFileSync, existsSync } from "fs"
+import { mkdirSync, readdirSync, readFileSync, existsSync, writeFileSync } from "fs"
 import type { LoopState, LastReportData, Verdict } from "../types"
 
 export interface ReportResult {
   jsonPath: string
   mdPath: string
+}
+
+export interface ReportPayload {
+  /** Structured JSON payload (already-shaped object, not stringified). */
+  json: object
+  /** Human-readable markdown report. */
+  md: string
+}
+
+/**
+ * Build report payloads in memory without writing to disk.
+ * Use this when embedding paddock as a library (e.g. ranch persists to S3/DB).
+ */
+export function buildReport(state: LoopState): ReportPayload {
+  return {
+    json: buildJsonReport(state),
+    md: buildMarkdownReport(state),
+  }
 }
 
 export function saveReport(repoRoot: string, state: LoopState): ReportResult {
@@ -13,12 +31,13 @@ export function saveReport(repoRoot: string, state: LoopState): ReportResult {
 
   const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)
   const baseName = `eval-${ts}`
+  const { json, md } = buildReport(state)
 
   const jsonPath = join(reportsDir, `${baseName}.json`)
-  Bun.write(jsonPath, JSON.stringify(buildJsonReport(state), null, 2))
+  writeFileSync(jsonPath, JSON.stringify(json, null, 2))
 
   const mdPath = join(reportsDir, `${baseName}.md`)
-  Bun.write(mdPath, buildMarkdownReport(state))
+  writeFileSync(mdPath, md)
 
   return { jsonPath, mdPath }
 }
@@ -61,7 +80,6 @@ function buildJsonReport(state: LoopState): object {
     timestamp: new Date().toISOString(),
     phase: state.phase,
     passRate: state.passRate,
-    iteration: state.iteration,
     scenarioCount: state.evaluations.length,
     allScenarioIds: state.scenarios.map(s => s.id),
     tokenUsage: state.tokenUsage,
@@ -135,19 +153,25 @@ function buildMarkdownReport(state: LoopState): string {
     lines.push("")
   }
 
+  // Lookup map for scenario metadata (name, category, difficulty)
+  const scenarioById = new Map(state.scenarios.map(s => [s.id, s]))
+
   // Results table
   lines.push(
     "## Results",
     "",
-    "| Verdict | Scenario | Score | Agreement |",
-    "|---------|----------|-------|-----------|",
+    "| Verdict | Scenario | Category | Score | Agreement |",
+    "|---------|----------|----------|-------|-----------|",
   )
   for (const e of state.evaluations) {
     const icon = e.finalVerdict === "pass" ? "PASS"
       : e.finalVerdict === "partial" ? "PARTIAL"
       : e.finalVerdict === "skipped" ? "SKIPPED"
       : "FAIL"
-    lines.push(`| ${icon} | ${e.scenarioId} | ${e.finalScore.toFixed(1)}/10 | ${(e.agreement * 100).toFixed(0)}% |`)
+    const s = scenarioById.get(e.scenarioId)
+    const name = s?.name ?? e.scenarioId
+    const category = s?.category ?? "—"
+    lines.push(`| ${icon} | ${name} | ${category} | ${e.finalScore.toFixed(1)}/10 | ${(e.agreement * 100).toFixed(0)}% |`)
   }
 
   // Details for non-pass scenarios
@@ -155,7 +179,15 @@ function buildMarkdownReport(state: LoopState): string {
   if (nonPass.length > 0) {
     lines.push("", "## Details", "")
     for (const e of nonPass) {
-      lines.push(`### ${e.scenarioId} (${e.finalVerdict} — ${e.finalScore.toFixed(1)}/10)`, "")
+      const s = scenarioById.get(e.scenarioId)
+      const heading = s?.name ?? e.scenarioId
+      const meta = s ? ` _(${s.category} · ${s.difficulty})_` : ""
+      lines.push(
+        `### ${heading} (${e.finalVerdict} — ${e.finalScore.toFixed(1)}/10)${meta}`,
+        "",
+        `\`${e.scenarioId}\``,
+        "",
+      )
       for (const j of e.judges) {
         lines.push(`**${j.judgeModel}** (${j.overallScore.toFixed(1)}/10):`)
         for (const [dim, text] of Object.entries(j.reasoning)) {

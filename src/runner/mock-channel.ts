@@ -1,6 +1,8 @@
 export interface Message {
   id: string
+  role: string
   text: string
+  parts: Array<{ type: string; text?: string }>
   from: string
   channel: string
   ts: number
@@ -51,7 +53,9 @@ export class MockChannel implements IChannelGateway {
     if (!this.handler) throw new Error("No message handler registered on MockChannel")
     await this.handler({
       id: crypto.randomUUID(),
+      role: "user",
       text,
+      parts: [{ type: "text", text }],
       from,
       channel: "mock",
       ts: Date.now(),

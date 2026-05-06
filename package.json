@@ -1,16 +1,17 @@
 {
   "name": "@cleanslice/paddock",
-  "version": "0.1.2",
+  "version": "0.2.3",
   "license": "MIT",
   "type": "module",
   "bin": {
     "paddock": "./dist/cli.js",
-    "paddock-mcp": "./dist/index.js"
+    "paddock-mcp": "./dist/mcp.js"
   },
   "main": "./dist/index.js",
   "exports": {
     ".": "./dist/index.js",
-    "./cli": "./dist/cli.js"
+    "./cli": "./dist/cli.js",
+    "./mcp": "./dist/mcp.js"
   },
   "files": [
     "dist/",
@@ -20,15 +21,14 @@
     "bun": ">=1.0.0"
   },
   "scripts": {
-    "build": "bun build src/cli.ts --outfile dist/cli.js --target bun --packages external && bun build src/index.ts --outfile dist/index.js --target bun --packages external",
+    "build": "bun build src/cli.ts --outfile dist/cli.js --target bun --packages external && bun build src/index.ts --outfile dist/index.js --target bun --packages external && bun build src/mcp.ts --outfile dist/mcp.js --target bun --packages external",
     "prepublishOnly": "bun run build",
     "eval": "bun run src/cli.ts run",
     "eval:quick": "bun run src/cli.ts run --count 3",
     "eval:full": "bun run src/cli.ts run --full",
-    "eval:improve": "bun run src/cli.ts run --improve",
     "eval:category": "bun run src/cli.ts run --categories",
     "scenarios": "bun run src/cli.ts scenarios",
-    "mcp": "bun run src/index.ts",
+    "mcp": "bun run src/mcp.ts",
     "typecheck": "bunx tsc --noEmit"
   },
   "dependencies": {
