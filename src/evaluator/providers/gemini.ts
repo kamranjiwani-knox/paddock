@@ -1,12 +1,30 @@
 import type { JudgeProvider, JudgePrompt, TokenUsage } from "../../types"
 
 /**
- * Gemini judge provider.
+ * Gemini judge provider — supports two auth modes, auto-detected from env.
+ *
+ *   Vertex AI mode (preferred for FedRAMP-aligned deployments):
+ *     - Active when `ANTHROPIC_VERTEX_PROJECT_ID` and `CLOUD_ML_REGION` are set
+ *       (paddock reuses the Anthropic-named Vertex env vars so a single env
+ *       block covers Claude + Gemini judges; the same env activates Vertex
+ *       mode for both).
+ *     - Uses `@google/genai` (optional peer dep — install separately) with
+ *       `vertexai: true`. Auth is Application Default Credentials locally
+ *       and Workload Identity Federation in production via
+ *       `google-auth-library`'s default chain.
+ *
+ *   Direct API mode (default for public users):
+ *     - Active when neither Vertex env is set but `GEMINI_API_KEY` /
+ *       `GOOGLE_API_KEY` is provided (passed via the JudgeProviderConfig's
+ *       `apiKey`).
+ *     - Uses raw REST against `generativelanguage.googleapis.com`. Keeps
+ *       paddock's "no-mandatory-SDK" surface for users who only need the
+ *       direct path.
  *
  * Prompt structure: when complete() receives a JudgePrompt, the static
  * system prefix is sent as `systemInstruction` (Gemini's structured
- * separation) and the variable content as `contents`. This positions
- * us to take advantage of Gemini's implicit caching when it stabilizes
+ * separation) and the variable content as `contents`. This positions us
+ * to take advantage of Gemini's implicit caching when it stabilizes
  * (currently flaky on gemini-3-pro-preview per a known Google issue).
  *
  * Explicit caching via `cachedContents` is a separate, larger change
@@ -35,26 +53,90 @@ const JUDGE_MAX_OUTPUT_TOKENS = parseBudget(process.env.EVAL_JUDGE_MAX_TOKENS, 1
 const SUPPORTS_THINKING_BUDGET = (model: string): boolean =>
   /^gemini-(2\.5|3)/.test(model)
 
+type GeminiMode =
+  | { kind: "vertex"; projectId: string; region: string; client?: GenAIClient }
+  | { kind: "api-key"; apiKey: string }
+
+/** Shape of the @google/genai client we use — just `models.generateContent`. */
+interface GenAIClient {
+  models: {
+    generateContent(args: {
+      model: string
+      contents: string | Array<{ role?: string; parts: Array<{ text: string }> }>
+      config?: Record<string, unknown>
+    }): Promise<{
+      text?: string
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
+      usageMetadata?: {
+        promptTokenCount?: number
+        candidatesTokenCount?: number
+        thoughtsTokenCount?: number
+        totalTokenCount?: number
+      }
+    }>
+  }
+}
+
+function detectVertexMode(): { projectId: string; region: string } | null {
+  const projectId = process.env.ANTHROPIC_VERTEX_PROJECT_ID
+  const region = process.env.CLOUD_ML_REGION
+  if (projectId && region) return { projectId, region }
+  return null
+}
+
 export class GeminiJudgeProvider implements JudgeProvider {
   name = "gemini"
   model: string
   usage: TokenUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
-  private apiKey: string
+  private mode: GeminiMode
 
-  constructor(apiKey: string, model = "gemini-2.5-pro") {
+  constructor(apiKey: string | undefined, model = "gemini-2.5-pro") {
     this.model = model
-    this.apiKey = apiKey
+    const vertex = detectVertexMode()
+    if (vertex) {
+      // Vertex mode wins when both auth paths are present, matching the
+      // migration intent.
+      this.mode = { kind: "vertex", projectId: vertex.projectId, region: vertex.region }
+      return
+    }
+    if (!apiKey) {
+      throw new Error(
+        "GeminiJudgeProvider: no auth configured. Set ANTHROPIC_VERTEX_PROJECT_ID + CLOUD_ML_REGION for Vertex mode, or pass a GEMINI_API_KEY / GOOGLE_API_KEY for direct mode.",
+      )
+    }
+    this.mode = { kind: "api-key", apiKey }
   }
 
-  async complete(prompt: string | JudgePrompt): Promise<string> {
-    const { system, user } = typeof prompt === "string"
-      ? { system: "", user: prompt }
-      : prompt
+  /** Lazy-load @google/genai so direct-API users don't need the peer dep. */
+  private async getVertexClient(): Promise<GenAIClient> {
+    if (this.mode.kind !== "vertex") {
+      throw new Error("getVertexClient called outside Vertex mode")
+    }
+    if (this.mode.client) return this.mode.client
+    let GoogleGenAICtor: new (opts: { vertexai: boolean; project: string; location: string }) => GenAIClient
+    try {
+      const mod = await import("@google/genai")
+      GoogleGenAICtor = mod.GoogleGenAI as unknown as typeof GoogleGenAICtor
+    } catch {
+      throw new Error(
+        "Vertex mode requires the optional peer dependency `@google/genai`. Install it with: npm install @google/genai",
+      )
+    }
+    this.mode.client = new GoogleGenAICtor({
+      vertexai: true,
+      project: this.mode.projectId,
+      location: this.mode.region,
+    })
+    return this.mode.client
+  }
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`
+  private supportsThinking(): boolean {
+    return SUPPORTS_THINKING_BUDGET(this.model)
+  }
 
-    const supportsThinking = SUPPORTS_THINKING_BUDGET(this.model)
-    const generationConfig: Record<string, unknown> = {
+  private buildGenerationConfig(): Record<string, unknown> {
+    const supportsThinking = this.supportsThinking()
+    const config: Record<string, unknown> = {
       // Older models (gemini-1.5/2.0) get the original 8K cap; thinking-capable
       // models get the wider cap to leave room when JUDGE_MAX_TOKENS is bumped
       // alongside thinking budget. (Gemini's thinkingBudget is separate from
@@ -68,12 +150,56 @@ export class GeminiJudgeProvider implements JudgeProvider {
       // 0 disables thinking; positive values pin the budget. Without this
       // the model uses an undocumented dynamic budget per call, which
       // varies the strictness of judging across runs.
-      generationConfig.thinkingConfig = { thinkingBudget: JUDGE_THINKING_BUDGET }
+      config.thinkingConfig = { thinkingBudget: JUDGE_THINKING_BUDGET }
     }
+    return config
+  }
+
+  private recordUsage(usage: {
+    promptTokenCount?: number
+    candidatesTokenCount?: number
+    thoughtsTokenCount?: number
+  } | undefined): void {
+    if (!usage) return
+    this.usage.inputTokens += usage.promptTokenCount ?? 0
+    this.usage.outputTokens += usage.candidatesTokenCount ?? 0
+    // Gemini exposes reasoning ("thoughts") tokens in a separate counter —
+    // sum into thinkingTokens so the cost report doesn't drop the entire
+    // thinking spend (often 5-10K tokens per judge call at thinking depth).
+    this.usage.thinkingTokens = (this.usage.thinkingTokens ?? 0) + (usage.thoughtsTokenCount ?? 0)
+    // Recompute total locally — Gemini's totalTokenCount sometimes includes
+    // thoughts and sometimes doesn't depending on model version, so derive
+    // it deterministically from the parts.
+    this.usage.totalTokens =
+      this.usage.inputTokens + this.usage.outputTokens + (this.usage.thinkingTokens ?? 0)
+  }
+
+  async complete(prompt: string | JudgePrompt): Promise<string> {
+    const { system, user } = typeof prompt === "string"
+      ? { system: "", user: prompt }
+      : prompt
+
+    if (this.mode.kind === "vertex") {
+      const client = await this.getVertexClient()
+      const config = this.buildGenerationConfig()
+      if (system) {
+        config.systemInstruction = { parts: [{ text: system }] }
+      }
+      const response = await client.models.generateContent({
+        model: this.model,
+        contents: [{ role: "user", parts: [{ text: user }] }],
+        config,
+      })
+      this.recordUsage(response.usageMetadata)
+      return response.text ?? response.candidates?.[0]?.content?.parts?.[0]?.text ?? ""
+    }
+
+    // Direct API mode — REST against generativelanguage.googleapis.com.
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.mode.apiKey}`
 
     const body: Record<string, unknown> = {
       contents: [{ parts: [{ text: user }] }],
-      generationConfig,
+      generationConfig: this.buildGenerationConfig(),
     }
     if (system) {
       body.systemInstruction = { parts: [{ text: system }] }
@@ -89,7 +215,7 @@ export class GeminiJudgeProvider implements JudgeProvider {
       throw new Error(`Gemini API error: ${res.status} ${await res.text()}`)
     }
 
-    const data = await res.json() as {
+    const data = (await res.json()) as {
       candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
       usageMetadata?: {
         promptTokenCount?: number
@@ -98,22 +224,7 @@ export class GeminiJudgeProvider implements JudgeProvider {
         totalTokenCount?: number
       }
     }
-    if (data.usageMetadata) {
-      const u = data.usageMetadata
-      this.usage.inputTokens += u.promptTokenCount ?? 0
-      this.usage.outputTokens += u.candidatesTokenCount ?? 0
-      // Gemini exposes reasoning ("thoughts") tokens in a separate counter —
-      // sum into thinkingTokens so the cost report doesn't drop the entire
-      // thinking spend (often 5-10K tokens per judge call at thinking depth).
-      this.usage.thinkingTokens = (this.usage.thinkingTokens ?? 0) + (u.thoughtsTokenCount ?? 0)
-      // Recompute total locally — Gemini's totalTokenCount sometimes includes
-      // thoughts and sometimes doesn't depending on model version, so derive
-      // it deterministically from the parts.
-      this.usage.totalTokens =
-        this.usage.inputTokens +
-        this.usage.outputTokens +
-        (this.usage.thinkingTokens ?? 0)
-    }
+    this.recordUsage(data.usageMetadata)
     return data.candidates?.[0]?.content?.parts?.[0]?.text ?? ""
   }
 }

@@ -86,10 +86,20 @@ function detectRepoRoot(): string {
 function buildJudgeConfigs(): JudgeProviderConfig[] {
   const configs: JudgeProviderConfig[] = []
 
-  // Prefer CLAUDE_CODE_OAUTH_TOKEN (supports comma-separated token rotation)
+  // Vertex AI mode is auto-detected by each provider from
+  // ANTHROPIC_VERTEX_PROJECT_ID + CLOUD_ML_REGION. When that env is set, the
+  // Claude and Gemini judges authenticate via ADC/WIF and don't need an API
+  // key, so we register them with apiKey=undefined. The providers themselves
+  // throw if neither auth path is available.
+  const vertexMode =
+    !!(process.env.ANTHROPIC_VERTEX_PROJECT_ID && process.env.CLOUD_ML_REGION)
+
+  // Claude judge: prefer CLAUDE_CODE_OAUTH_TOKEN (supports comma-separated
+  // token rotation), fall back to ANTHROPIC_API_KEY. In Vertex mode, neither
+  // key is required.
   // Model override: EVAL_CLAUDE_JUDGE_MODEL (default: claude-sonnet-4-6)
   const claudeKey = process.env.CLAUDE_CODE_OAUTH_TOKEN ?? process.env.ANTHROPIC_API_KEY
-  if (claudeKey) {
+  if (vertexMode || claudeKey) {
     configs.push({
       type: "claude",
       model: process.env.EVAL_CLAUDE_JUDGE_MODEL ?? "claude-sonnet-4-6",
@@ -97,15 +107,18 @@ function buildJudgeConfigs(): JudgeProviderConfig[] {
     })
   }
 
+  // Gemini judge: in Vertex mode, no API key is required.
   // Model override: EVAL_GEMINI_JUDGE_MODEL (default: gemini-2.5-pro)
-  if (process.env.GEMINI_API_KEY) {
+  const geminiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY
+  if (vertexMode || geminiKey) {
     configs.push({
       type: "gemini",
       model: process.env.EVAL_GEMINI_JUDGE_MODEL ?? "gemini-2.5-pro",
-      apiKey: process.env.GEMINI_API_KEY,
+      apiKey: geminiKey,
     })
   }
 
+  // OpenAI judge: no Vertex equivalent — still requires OPENAI_API_KEY.
   // Model override: EVAL_OPENAI_JUDGE_MODEL (default: gpt-4o)
   if (process.env.OPENAI_API_KEY) {
     configs.push({

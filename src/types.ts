@@ -220,7 +220,19 @@ export interface EvalConfig {
 export interface JudgeProviderConfig {
   type: "claude" | "gemini" | "openai"
   model: string
-  apiKey: string
+  /**
+   * API key for direct-API mode. Optional because Claude and Gemini judges
+   * also support Vertex AI mode, which they detect from
+   * `ANTHROPIC_VERTEX_PROJECT_ID` + `CLOUD_ML_REGION` env vars and authenticate
+   * to via the Google Cloud ADC/WIF chain — no API key needed in that mode.
+   *
+   * OpenAI does not have a Vertex equivalent and still requires an API key.
+   *
+   * When omitted, the provider falls back to whatever env-detected auth path
+   * is available; if none is available, the provider throws at construction
+   * time with a clear error.
+   */
+  apiKey?: string
 }
 
 export const DEFAULT_BLOCKED_TOOLS = [
