@@ -9,13 +9,13 @@
  *
  *   1. `GOOGLE_CLOUD_PROJECT` + `GOOGLE_CLOUD_LOCATION`
  *      Google's canonical names, read natively by `@google/genai`. Preferred
- *      for new / public deployments because they're provider-agnostic and
- *      self-documenting (any GCP SDK would read the same pair).
+ *      because they're provider-agnostic and self-documenting (any GCP SDK
+ *      would read the same pair).
  *
  *   2. `ANTHROPIC_VERTEX_PROJECT_ID` + `CLOUD_ML_REGION`
  *      Names the `@anthropic-ai/vertex-sdk` reads natively. Kept as a
- *      fallback so existing Knox env blocks (CMX, knoxai-agent) keep
- *      working without modification.
+ *      fallback so deployments that already standardize on the Anthropic
+ *      SDK's env conventions keep working without modification.
  *
  * Returning a normalized `{ projectId, region }` (rather than two
  * different shapes) lets the judge classes pass directly to either SDK

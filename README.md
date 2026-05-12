@@ -83,12 +83,13 @@ no Vertex offering.
 
 ```bash
 # Preferred — Google's canonical env vars
-GOOGLE_CLOUD_PROJECT=my-fedramp-project
+GOOGLE_CLOUD_PROJECT=your-gcp-project
 GOOGLE_CLOUD_LOCATION=us-east5
 
 # Also accepted — the @anthropic-ai/vertex-sdk's native env vars
-# (use these if you already have them set for other Knox services)
-ANTHROPIC_VERTEX_PROJECT_ID=my-fedramp-project
+# (use these if your deployment already standardizes on the Anthropic SDK's
+# native env names)
+ANTHROPIC_VERTEX_PROJECT_ID=your-gcp-project
 CLOUD_ML_REGION=us-east5
 
 # Optional — keep direct OpenAI key alongside Vertex Claude+Gemini
