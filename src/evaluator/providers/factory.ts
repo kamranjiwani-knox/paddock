@@ -24,10 +24,7 @@ export function createJudgeProvider(config: JudgeProviderConfig): JudgeProvider 
       return new ClaudeJudgeProvider({
         mode: "vertex",
         projectId: config.projectId,
-        // Anthropic Vertex SDK names this `region`; paddock's public API
-        // uses `location` (matching Google's canonical `GOOGLE_CLOUD_LOCATION`
-        // env var). They're the same string, just different field names.
-        region: config.location,
+        region: config.region,
         model: config.model,
       })
     case "gemini":
@@ -40,7 +37,7 @@ export function createJudgeProvider(config: JudgeProviderConfig): JudgeProvider 
       return new GeminiJudgeProvider({
         mode: "vertex",
         projectId: config.projectId,
-        region: config.location,
+        region: config.region,
         model: config.model,
       })
     case "openai":

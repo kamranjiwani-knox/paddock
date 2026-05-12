@@ -223,7 +223,7 @@ export interface EvalConfig {
  * The `type` discriminator selects both the provider family and the auth
  * path. Direct-API variants (`claude`, `gemini`, `openai`) require an
  * `apiKey`. Vertex variants (`claude-vertex`, `gemini-vertex`) require
- * `projectId` + `location` and authenticate via Google Cloud Application
+ * `projectId` + `region` and authenticate via Google Cloud Application
  * Default Credentials — no API key is read or accepted on those variants.
  *
  * OpenAI has no Vertex equivalent.
@@ -256,8 +256,8 @@ export interface ClaudeVertexJudgeConfig {
   model: string
   /** GCP project ID where the Vertex AI API is enabled. */
   projectId: string
-  /** GCP region — e.g. `us-east5` for FedRAMP-eligible Claude. */
-  location: string
+  /** GCP region — e.g. `us-east5`. */
+  region: string
 }
 
 /** Gemini via the direct Google AI Studio API. */
@@ -275,7 +275,7 @@ export interface GeminiVertexJudgeConfig {
   /** GCP project ID where the Vertex AI API is enabled. */
   projectId: string
   /** GCP region — e.g. `us-east5`. */
-  location: string
+  region: string
 }
 
 /** OpenAI / GPT via the direct OpenAI API. (No Vertex equivalent — OpenAI

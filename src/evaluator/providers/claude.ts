@@ -92,7 +92,7 @@ export class ClaudeJudgeProvider implements JudgeProvider {
       .filter(Boolean)
     if (tokens.length === 0) {
       throw new Error(
-        "ClaudeJudgeProvider: api-key mode received no usable tokens. Pass an ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (comma-separated for rotation).",
+        "ClaudeJudgeProvider: api-key mode received no usable tokens. Pass an ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (comma-separated for rotation), or use Vertex mode by setting VERTEX_PROJECT_ID + VERTEX_REGION.",
       )
     }
     this.mode = { kind: "api-key", tokens, tokenIndex: 0 }

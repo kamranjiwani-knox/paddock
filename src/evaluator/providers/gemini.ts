@@ -99,7 +99,7 @@ export class GeminiJudgeProvider implements JudgeProvider {
     }
     if (!opts.apiKey) {
       throw new Error(
-        "GeminiJudgeProvider: api-key mode received an empty key. Pass a GEMINI_API_KEY or GOOGLE_API_KEY.",
+        "GeminiJudgeProvider: api-key mode received an empty key. Pass a GEMINI_API_KEY or GOOGLE_API_KEY, or use Vertex mode by setting VERTEX_PROJECT_ID + VERTEX_REGION.",
       )
     }
     this.mode = { kind: "api-key", apiKey: opts.apiKey }

@@ -21,13 +21,13 @@ function buildJudgeConfigs(): JudgeProviderConfig[] {
       type: "claude-vertex",
       model: "claude-sonnet-4-6",
       projectId: vertex.projectId,
-      location: vertex.region,
+      region: vertex.region,
     })
     configs.push({
       type: "gemini-vertex",
       model: "gemini-2.5-pro",
       projectId: vertex.projectId,
-      location: vertex.region,
+      region: vertex.region,
     })
   } else {
     const claudeKey = process.env.CLAUDE_CODE_OAUTH_TOKEN ?? process.env.ANTHROPIC_API_KEY

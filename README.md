@@ -9,7 +9,7 @@ Automated eval & improvement loop for AI agents. Generates test scenarios, runs 
 Judges run in one of two auth modes, picked per-deployment:
 
 - **Direct API** (default for public users) — Claude / Gemini / GPT via their respective vendor APIs.
-- **Vertex AI** (for FedRAMP-aligned deployments) — Claude + Gemini via Google Cloud Vertex AI with Application Default Credentials. The GPT judge stays direct (OpenAI has no Vertex offering).
+- **Vertex AI** (for compliance-aligned / GCP-aligned deployments) — Claude + Gemini via Google Cloud Vertex AI with Application Default Credentials. The GPT judge stays direct (OpenAI has no Vertex offering).
 
 ## How It Works
 
@@ -33,7 +33,7 @@ Scenarios (.yml) → Agent Runtime (mock channel) → 3 LLM Judges → Consensus
 
 1. **Load scenarios** from `.paddock/scenarios/` in the target project (YAML files organized by category)
 2. **Run each scenario** against the agent via a mock channel — captures responses, tool calls, errors, timing
-3. **Up to 3 LLM judges** (Claude, Gemini, GPT) — registered based on which auth paths are configured — independently score each run on correctness, tool usage, SOUL compliance, response quality, error handling. Vertex-mode FedRAMP deployments typically run 2 (Claude + Gemini via Vertex); direct-mode users typically run all 3
+3. **Up to 3 LLM judges** (Claude, Gemini, GPT) — registered based on which auth paths are configured — independently score each run on correctness, tool usage, SOUL compliance, response quality, error handling. Vertex-mode deployments typically run 2 (Claude + Gemini via Vertex); direct-mode users typically run all 3
 4. **Consensus**: median scores + majority vote → pass/fail/partial
 5. **If failing**: analyzer finds patterns, patcher generates code fixes, sandbox validates (type-check + build)
 6. **Repeat** until pass rate ≥ threshold or budget exhausted
@@ -54,7 +54,7 @@ cp .env.example .env
 - [Bun](https://bun.sh/) runtime
 - At least one judge configured — either:
   - **Direct API**: an LLM API key (Claude preferred, Gemini / GPT optional for multi-judge consensus), or
-  - **Vertex AI**: `GOOGLE_CLOUD_PROJECT` + `GOOGLE_CLOUD_LOCATION` plus the optional peer deps `@anthropic-ai/vertex-sdk` + `@google/genai`
+  - **Vertex AI**: `VERTEX_PROJECT_ID` + `VERTEX_REGION` plus the optional peer deps `@anthropic-ai/vertex-sdk` + `@google/genai`
 
 ### Environment Variables
 
@@ -73,7 +73,7 @@ GEMINI_API_KEY=AIza...
 OPENAI_API_KEY=sk-...
 ```
 
-#### Vertex AI mode (for FedRAMP-aligned deployments)
+#### Vertex AI mode (for compliance-aligned / GCP-aligned deployments)
 
 When Vertex env is set, the Claude and Gemini judges skip API-key auth and
 authenticate via Google Cloud Application Default Credentials (`gcloud auth
@@ -82,19 +82,18 @@ production). API keys are still required for the OpenAI judge — OpenAI has
 no Vertex offering.
 
 ```bash
-# Preferred — Google's canonical env vars
-GOOGLE_CLOUD_PROJECT=your-gcp-project
-GOOGLE_CLOUD_LOCATION=us-east5
-
-# Also accepted — the @anthropic-ai/vertex-sdk's native env vars
-# (use these if your deployment already standardizes on the Anthropic SDK's
-# native env names)
-ANTHROPIC_VERTEX_PROJECT_ID=your-gcp-project
-CLOUD_ML_REGION=us-east5
+# Required — both must be set to activate Vertex mode
+VERTEX_PROJECT_ID=your-gcp-project
+VERTEX_REGION=us-east5
 
 # Optional — keep direct OpenAI key alongside Vertex Claude+Gemini
 OPENAI_API_KEY=sk-...
 ```
+
+The env-var names are deliberately platform-named (`VERTEX_*`) rather
+than vendor-named: in this mode Vertex hosts **both** judges (Claude via
+`@anthropic-ai/vertex-sdk`, Gemini via `@google/genai`), so a single
+platform-named pair gates both judges symmetrically.
 
 Vertex mode requires installing two optional peer dependencies (paddock
 declares them as optional so direct-API users don't pay the install cost):

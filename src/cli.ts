@@ -59,13 +59,12 @@ ${bold("Environment:")}
     GEMINI_API_KEY             Gemini judge
     OPENAI_API_KEY             GPT judge
 
-  Vertex AI mode (preferred for FedRAMP-aligned deployments — Claude + Gemini
-  judges only; OpenAI judge keeps requiring OPENAI_API_KEY since OpenAI is
-  not on Vertex). Auth uses Application Default Credentials.
-    GOOGLE_CLOUD_PROJECT       GCP project ID (preferred)
-    GOOGLE_CLOUD_LOCATION      e.g. us-east5 (preferred)
-    ANTHROPIC_VERTEX_PROJECT_ID  Fallback if GOOGLE_CLOUD_PROJECT not set
-    CLOUD_ML_REGION              Fallback if GOOGLE_CLOUD_LOCATION not set
+  Vertex AI mode (for compliance-aligned / GCP-aligned deployments —
+  Claude + Gemini judges run via Vertex; OpenAI judge keeps requiring
+  OPENAI_API_KEY since OpenAI is not on Vertex). Auth uses Application
+  Default Credentials.
+    VERTEX_PROJECT_ID          GCP project where Vertex AI is enabled
+    VERTEX_REGION              GCP region — e.g. us-east5
 
   Other:
     EVAL_REPO_ROOT             Override repo root
@@ -113,13 +112,13 @@ function buildJudgeConfigs(): JudgeProviderConfig[] {
       type: "claude-vertex",
       model: claudeModel,
       projectId: vertex.projectId,
-      location: vertex.region,
+      region: vertex.region,
     })
     configs.push({
       type: "gemini-vertex",
       model: geminiModel,
       projectId: vertex.projectId,
-      location: vertex.region,
+      region: vertex.region,
     })
   } else {
     // Direct-API mode. Prefer CLAUDE_CODE_OAUTH_TOKEN (supports
@@ -179,7 +178,7 @@ async function cmdRun(args: string[]) {
   const judgeConfigs = buildJudgeConfigs()
   if (judgeConfigs.length === 0) {
     console.error(red(
-      "Error: No judges configured. Set CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY for direct mode, or GOOGLE_CLOUD_PROJECT + GOOGLE_CLOUD_LOCATION for Vertex mode.",
+      "Error: No judges configured. Set CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY for direct mode, or VERTEX_PROJECT_ID + VERTEX_REGION for Vertex mode.",
     ))
     process.exit(1)
   }
