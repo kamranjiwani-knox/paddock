@@ -1,25 +1,27 @@
 import type { JudgeProvider, JudgePrompt, TokenUsage } from "../../types"
 
 /**
- * Gemini judge provider — supports two auth modes, auto-detected from env.
+ * Gemini judge provider — supports two auth modes, selected explicitly via
+ * the `mode` discriminator passed to the constructor.
  *
  *   Vertex AI mode (preferred for FedRAMP-aligned deployments):
- *     - Active when `ANTHROPIC_VERTEX_PROJECT_ID` and `CLOUD_ML_REGION` are set
- *       (paddock reuses the Anthropic-named Vertex env vars so a single env
- *       block covers Claude + Gemini judges; the same env activates Vertex
- *       mode for both).
+ *     - Caller passes `{ mode: "vertex", projectId, region }` directly.
  *     - Uses `@google/genai` (optional peer dep — install separately) with
  *       `vertexai: true`. Auth is Application Default Credentials locally
  *       and Workload Identity Federation in production via
  *       `google-auth-library`'s default chain.
  *
- *   Direct API mode (default for public users):
- *     - Active when neither Vertex env is set but `GEMINI_API_KEY` /
- *       `GOOGLE_API_KEY` is provided (passed via the JudgeProviderConfig's
- *       `apiKey`).
+ *   API-key mode (default for public users):
+ *     - Caller passes `{ mode: "api-key", apiKey }` directly.
  *     - Uses raw REST against `generativelanguage.googleapis.com`. Keeps
  *       paddock's "no-mandatory-SDK" surface for users who only need the
  *       direct path.
+ *
+ * This class is internal to paddock. Environment-based mode detection lives
+ * in the entry points (`cli.ts`, `mcp/server.ts`) which build the typed
+ * `JudgeProviderConfig` discriminated union; the class takes a fully-resolved
+ * mode so library consumers who embed paddock get deterministic behavior
+ * independent of process env.
  *
  * Prompt structure: when complete() receives a JudgePrompt, the static
  * system prefix is sent as `systemInstruction` (Gemini's structured
@@ -77,12 +79,11 @@ interface GenAIClient {
   }
 }
 
-function detectVertexMode(): { projectId: string; region: string } | null {
-  const projectId = process.env.ANTHROPIC_VERTEX_PROJECT_ID
-  const region = process.env.CLOUD_ML_REGION
-  if (projectId && region) return { projectId, region }
-  return null
-}
+/** Constructor options — a fully-resolved auth mode. Factory.ts converts
+ *  the public `JudgeProviderConfig` discriminated union into one of these. */
+export type GeminiProviderOpts =
+  | { mode: "vertex"; projectId: string; region: string; model?: string }
+  | { mode: "api-key"; apiKey: string; model?: string }
 
 export class GeminiJudgeProvider implements JudgeProvider {
   name = "gemini"
@@ -90,21 +91,18 @@ export class GeminiJudgeProvider implements JudgeProvider {
   usage: TokenUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
   private mode: GeminiMode
 
-  constructor(apiKey: string | undefined, model = "gemini-2.5-pro") {
-    this.model = model
-    const vertex = detectVertexMode()
-    if (vertex) {
-      // Vertex mode wins when both auth paths are present, matching the
-      // migration intent.
-      this.mode = { kind: "vertex", projectId: vertex.projectId, region: vertex.region }
+  constructor(opts: GeminiProviderOpts) {
+    this.model = opts.model ?? "gemini-2.5-pro"
+    if (opts.mode === "vertex") {
+      this.mode = { kind: "vertex", projectId: opts.projectId, region: opts.region }
       return
     }
-    if (!apiKey) {
+    if (!opts.apiKey) {
       throw new Error(
-        "GeminiJudgeProvider: no auth configured. Set ANTHROPIC_VERTEX_PROJECT_ID + CLOUD_ML_REGION for Vertex mode, or pass a GEMINI_API_KEY / GOOGLE_API_KEY for direct mode.",
+        "GeminiJudgeProvider: api-key mode received an empty key. Pass a GEMINI_API_KEY or GOOGLE_API_KEY.",
       )
     }
-    this.mode = { kind: "api-key", apiKey }
+    this.mode = { kind: "api-key", apiKey: opts.apiKey }
   }
 
   /** Lazy-load @google/genai so direct-API users don't need the peer dep. */

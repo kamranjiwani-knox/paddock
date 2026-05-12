@@ -2,10 +2,11 @@ import Anthropic from "@anthropic-ai/sdk"
 import type { JudgeProvider, JudgePrompt, TokenUsage } from "../../types"
 
 /**
- * Claude judge provider — supports two auth modes, auto-detected from env.
+ * Claude judge provider — supports two auth modes, selected explicitly via
+ * the `mode` discriminator passed to the constructor.
  *
  *   Vertex AI mode (preferred for FedRAMP-aligned deployments):
- *     - Active when `ANTHROPIC_VERTEX_PROJECT_ID` and `CLOUD_ML_REGION` are set.
+ *     - Caller passes `{ mode: "vertex", projectId, region }` directly.
  *     - Uses `@anthropic-ai/vertex-sdk` (optional peer dep — install
  *       separately for this mode).
  *     - Auth is Application Default Credentials locally and Workload Identity
@@ -13,13 +14,18 @@ import type { JudgeProvider, JudgePrompt, TokenUsage } from "../../types"
  *     - No token rotation — Vertex quota is per-GCP-project, managed via the
  *       Google Cloud console rather than by swapping credentials.
  *
- *   Direct API mode (default for public users):
- *     - Active when neither Vertex env is set but an API key / OAuth token
- *       is provided.
+ *   API-key mode (default for public users):
+ *     - Caller passes `{ mode: "api-key", apiKeyOrTokens }` directly.
  *     - Uses `@anthropic-ai/sdk` against `api.anthropic.com`.
  *     - Supports comma-separated rotation of `ANTHROPIC_API_KEY` or
  *       `CLAUDE_CODE_OAUTH_TOKEN` (sk-ant-oat01-*) with `authToken` + beta
  *       headers.
+ *
+ * This class is internal to paddock. Environment-based mode detection lives
+ * in the entry points (`cli.ts`, `mcp/server.ts`) which build the typed
+ * `JudgeProviderConfig` discriminated union; the class takes a fully-resolved
+ * mode so library consumers who embed paddock get deterministic behavior
+ * independent of process env.
  *
  * Prompt caching: when complete() receives a JudgePrompt, the static system
  * prefix is sent as a cached block (cache_control: ephemeral). Anthropic
@@ -62,12 +68,11 @@ type ClaudeMode =
   | { kind: "vertex"; projectId: string; region: string; client?: AnthropicClient }
   | { kind: "api-key"; tokens: string[]; tokenIndex: number }
 
-function detectVertexMode(): { projectId: string; region: string } | null {
-  const projectId = process.env.ANTHROPIC_VERTEX_PROJECT_ID
-  const region = process.env.CLOUD_ML_REGION
-  if (projectId && region) return { projectId, region }
-  return null
-}
+/** Constructor options — a fully-resolved auth mode. Factory.ts converts
+ *  the public `JudgeProviderConfig` discriminated union into one of these. */
+export type ClaudeProviderOpts =
+  | { mode: "vertex"; projectId: string; region: string; model?: string }
+  | { mode: "api-key"; apiKeyOrTokens: string; model?: string }
 
 export class ClaudeJudgeProvider implements JudgeProvider {
   name = "claude"
@@ -75,23 +80,19 @@ export class ClaudeJudgeProvider implements JudgeProvider {
   usage: TokenUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
   private mode: ClaudeMode
 
-  constructor(apiKeyOrTokens: string | undefined, model = "claude-sonnet-4-6") {
-    this.model = model
-    const vertex = detectVertexMode()
-    if (vertex) {
-      // Vertex mode takes priority — operators who set both Vertex env AND
-      // a legacy API key get Vertex routing, which matches the migration
-      // intent for FedRAMP-aligned deployments.
-      this.mode = { kind: "vertex", projectId: vertex.projectId, region: vertex.region }
+  constructor(opts: ClaudeProviderOpts) {
+    this.model = opts.model ?? "claude-sonnet-4-6"
+    if (opts.mode === "vertex") {
+      this.mode = { kind: "vertex", projectId: opts.projectId, region: opts.region }
       return
     }
-    const tokens = (apiKeyOrTokens ?? "")
+    const tokens = opts.apiKeyOrTokens
       .split(",")
       .map((t) => t.trim())
       .filter(Boolean)
     if (tokens.length === 0) {
       throw new Error(
-        "ClaudeJudgeProvider: no auth configured. Set ANTHROPIC_VERTEX_PROJECT_ID + CLOUD_ML_REGION for Vertex mode, or pass an ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN for direct mode.",
+        "ClaudeJudgeProvider: api-key mode received no usable tokens. Pass an ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (comma-separated for rotation).",
       )
     }
     this.mode = { kind: "api-key", tokens, tokenIndex: 0 }

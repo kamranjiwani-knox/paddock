@@ -217,22 +217,74 @@ export interface EvalConfig {
   concurrency: number          // max concurrent scenarios (default: 1 = sequential)
 }
 
-export interface JudgeProviderConfig {
-  type: "claude" | "gemini" | "openai"
+/**
+ * Configuration for a single judge LLM, including its auth mode.
+ *
+ * The `type` discriminator selects both the provider family and the auth
+ * path. Direct-API variants (`claude`, `gemini`, `openai`) require an
+ * `apiKey`. Vertex variants (`claude-vertex`, `gemini-vertex`) require
+ * `projectId` + `location` and authenticate via Google Cloud Application
+ * Default Credentials — no API key is read or accepted on those variants.
+ *
+ * OpenAI has no Vertex equivalent.
+ *
+ * Building the right variant from environment is the responsibility of
+ * paddock's entry points (`cli.ts`, `mcp/server.ts`); library consumers
+ * embed paddock by constructing these configs explicitly. The provider
+ * implementations themselves do not read environment variables — the auth
+ * mode is fully determined by the variant the caller passes in.
+ */
+export type JudgeProviderConfig =
+  | ClaudeJudgeConfig
+  | ClaudeVertexJudgeConfig
+  | GeminiJudgeConfig
+  | GeminiVertexJudgeConfig
+  | OpenAIJudgeConfig
+
+/** Claude via the direct Anthropic API. */
+export interface ClaudeJudgeConfig {
+  type: "claude"
   model: string
-  /**
-   * API key for direct-API mode. Optional because Claude and Gemini judges
-   * also support Vertex AI mode, which they detect from
-   * `ANTHROPIC_VERTEX_PROJECT_ID` + `CLOUD_ML_REGION` env vars and authenticate
-   * to via the Google Cloud ADC/WIF chain — no API key needed in that mode.
-   *
-   * OpenAI does not have a Vertex equivalent and still requires an API key.
-   *
-   * When omitted, the provider falls back to whatever env-detected auth path
-   * is available; if none is available, the provider throws at construction
-   * time with a clear error.
-   */
-  apiKey?: string
+  /** `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`. Comma-separate to
+   * rotate across multiple tokens on rate-limit / auth failures. */
+  apiKey: string
+}
+
+/** Claude via Google Cloud Vertex AI. Auth via ADC/WIF (no API key). */
+export interface ClaudeVertexJudgeConfig {
+  type: "claude-vertex"
+  model: string
+  /** GCP project ID where the Vertex AI API is enabled. */
+  projectId: string
+  /** GCP region — e.g. `us-east5` for FedRAMP-eligible Claude. */
+  location: string
+}
+
+/** Gemini via the direct Google AI Studio API. */
+export interface GeminiJudgeConfig {
+  type: "gemini"
+  model: string
+  /** `GEMINI_API_KEY` or `GOOGLE_API_KEY`. */
+  apiKey: string
+}
+
+/** Gemini via Google Cloud Vertex AI. Auth via ADC/WIF (no API key). */
+export interface GeminiVertexJudgeConfig {
+  type: "gemini-vertex"
+  model: string
+  /** GCP project ID where the Vertex AI API is enabled. */
+  projectId: string
+  /** GCP region — e.g. `us-east5`. */
+  location: string
+}
+
+/** OpenAI / GPT via the direct OpenAI API. (No Vertex equivalent — OpenAI
+ *  is not hosted on Google Cloud Vertex AI.) */
+export interface OpenAIJudgeConfig {
+  type: "openai"
+  model: string
+  /** `OPENAI_API_KEY`. */
+  apiKey: string
 }
 
 export const DEFAULT_BLOCKED_TOOLS = [
