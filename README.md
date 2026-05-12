@@ -51,6 +51,11 @@ cp .env.example .env
 
 ### Environment Variables
 
+Paddock's Claude and Gemini judges run in one of two modes, auto-detected
+from environment. Pick whichever fits your deployment:
+
+#### Direct API mode (default for public users)
+
 ```bash
 # Required (at least one)
 CLAUDE_CODE_OAUTH_TOKEN=token1,token2,token3   # Comma-separated, auto-rotation on rate limit
@@ -59,8 +64,40 @@ ANTHROPIC_API_KEY=sk-ant-...                    # Fallback
 # Optional (for 3-judge consensus)
 GEMINI_API_KEY=AIza...
 OPENAI_API_KEY=sk-...
+```
 
-# Optional overrides
+#### Vertex AI mode (for FedRAMP-aligned deployments)
+
+When Vertex env is set, the Claude and Gemini judges skip API-key auth and
+authenticate via Google Cloud Application Default Credentials (`gcloud auth
+application-default login` locally, Workload Identity Federation in
+production). API keys are still required for the OpenAI judge — OpenAI has
+no Vertex offering.
+
+```bash
+# Preferred — Google's canonical env vars
+GOOGLE_CLOUD_PROJECT=my-fedramp-project
+GOOGLE_CLOUD_LOCATION=us-east5
+
+# Also accepted — the @anthropic-ai/vertex-sdk's native env vars
+# (use these if you already have them set for other Knox services)
+ANTHROPIC_VERTEX_PROJECT_ID=my-fedramp-project
+CLOUD_ML_REGION=us-east5
+
+# Optional — keep direct OpenAI key alongside Vertex Claude+Gemini
+OPENAI_API_KEY=sk-...
+```
+
+Vertex mode requires installing two optional peer dependencies (paddock
+declares them as optional so direct-API users don't pay the install cost):
+
+```bash
+npm install @anthropic-ai/vertex-sdk @google/genai
+```
+
+#### Other overrides
+
+```bash
 EVAL_REPO_ROOT=/path/to/agent-repo
 EVAL_AGENT_DIR=/path/to/agent-repo/.agent
 EVAL_LLM_MODEL=claude-sonnet-4-20250514
