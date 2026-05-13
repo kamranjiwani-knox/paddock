@@ -126,24 +126,24 @@ export class GeminiJudgeProvider implements JudgeProvider {
       )
     }
     // `@google/genai` builds `${location}-aiplatform.googleapis.com` for any
-    // non-`global` location. That's correct for regional endpoints
-    // (`us-east5-aiplatform.googleapis.com`) but wrong for the `us` multi-
-    // region identifier — that routes through the standard host with the
-    // multi-region tag in the URL path (`.../locations/us/...`). Without
-    // this override, every judge call against `us` silently fails (DNS
-    // miss on the invalid host) and paddock attributes 0 score to the
+    // non-`global` location. That's correct for regional endpoints (e.g.
+    // `us-east5-aiplatform.googleapis.com`) but wrong for the `us` and `eu`
+    // multi-region identifiers — those route through the standard host with
+    // the multi-region tag in the URL path (`.../locations/us/...`). Without
+    // this override every judge call against a multi-region silently fails
+    // (DNS miss on the invalid host) and paddock attributes 0 score to the
     // judge, breaking multi-judge consensus.
     //
-    // Mirrors `consensus_check.repository.ts` in the knoxai-agent runtime.
-    // `eu` is intentionally not handled: FedRAMP-aligned deployments keep
-    // ML processing inside US jurisdiction; a non-US multi-region is a
-    // deployment error and the SDK's 404 against the wrong host is the
-    // right failure mode there.
+    // `global` and any single-region value (`us-central1`, `europe-west4`,
+    // etc.) fall through to the SDK's default URL construction, which is
+    // already correct for those cases.
+    const isMultiRegion =
+      this.mode.region === "us" || this.mode.region === "eu"
     this.mode.client = new GoogleGenAICtor({
       vertexai: true,
       project: this.mode.projectId,
       location: this.mode.region,
-      ...(this.mode.region === "us" && {
+      ...(isMultiRegion && {
         httpOptions: { baseUrl: "https://aiplatform.googleapis.com/" },
       }),
     } as ConstructorParameters<typeof GoogleGenAICtor>[0])
