@@ -57,6 +57,22 @@ const JUDGE_MAX_TOKENS = parseBudget(process.env.EVAL_JUDGE_MAX_TOKENS, 16000)
 const SUPPORTS_THINKING = (model: string): boolean =>
   /^(claude-opus-4|claude-sonnet-4)/.test(model)
 
+// Claude Opus 4.7 is the only Claude 4 model where Anthropic accepts
+// only adaptive thinking — `thinking: {type: "enabled"}` returns a 400
+// with `"thinking.type.enabled" is not supported`. All other supported
+// models (Sonnet 4.x) take the budget-based shape.
+//
+// This mirrors `claude.repository.ts:ADAPTIVE_THINKING_MODELS_REGEX` in
+// the knoxai-agent runtime — when paddock acts as a judge against the
+// same model the agent uses, the request shape has to match.
+const SUPPORTS_ADAPTIVE_THINKING = (model: string): boolean =>
+  /^claude-opus-4-7/.test(model)
+
+// Effort level for adaptive thinking. Anthropic's own default is "high".
+// `medium` matches the agent runtime's default — at "high" the model
+// thinks even on prompts where the latency/token cost isn't justified.
+const JUDGE_THINKING_EFFORT = process.env.EVAL_JUDGE_THINKING_EFFORT || "medium"
+
 /**
  * Minimal client shape — both `Anthropic` and `AnthropicVertex` expose this.
  * Using a structural type avoids importing AnthropicVertex eagerly: the
@@ -192,15 +208,27 @@ export class ClaudeJudgeProvider implements JudgeProvider {
       ? [{ type: "text" as const, text: system, cache_control: { type: "ephemeral" as const } }]
       : undefined
     const thinking = this.thinkingEnabled()
+    const adaptive = SUPPORTS_ADAPTIVE_THINKING(this.model)
     const response = await client.messages.create({
       model: this.model,
       max_tokens: thinking ? JUDGE_MAX_TOKENS : 8096,
       ...(systemBlocks ? { system: systemBlocks } : {}),
       messages: [{ role: "user", content: user }],
+      // Opus 4.7 requires adaptive thinking; all other thinking-capable
+      // models take the budget-based shape. See SUPPORTS_ADAPTIVE_THINKING
+      // for the regex; mirrors the agent runtime's behavior. `output_config`
+      // isn't yet in the AnthropicVertex SDK type defs as of 0.16.0, so
+      // we cast the params object to bypass — the API accepts the field.
       ...(thinking
-        ? { thinking: { type: "enabled" as const, budget_tokens: JUDGE_THINKING_BUDGET } }
+        ? adaptive
+          ? {
+              thinking: { type: "adaptive" as const },
+              output_config: { effort: JUDGE_THINKING_EFFORT },
+            }
+          : { thinking: { type: "enabled" as const, budget_tokens: JUDGE_THINKING_BUDGET } }
         : {}),
-    })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any)
     this.recordUsage(response.usage as Parameters<typeof this.recordUsage>[0])
     return response.content
       .filter((b): b is Anthropic.TextBlock => b.type === "text")

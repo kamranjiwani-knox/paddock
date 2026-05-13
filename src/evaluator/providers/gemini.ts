@@ -111,7 +111,12 @@ export class GeminiJudgeProvider implements JudgeProvider {
       throw new Error("getVertexClient called outside Vertex mode")
     }
     if (this.mode.client) return this.mode.client
-    let GoogleGenAICtor: new (opts: { vertexai: boolean; project: string; location: string }) => GenAIClient
+    let GoogleGenAICtor: new (opts: {
+      vertexai: boolean
+      project: string
+      location: string
+      httpOptions?: { baseUrl?: string }
+    }) => GenAIClient
     try {
       const mod = await import("@google/genai")
       GoogleGenAICtor = mod.GoogleGenAI as unknown as typeof GoogleGenAICtor
@@ -120,11 +125,28 @@ export class GeminiJudgeProvider implements JudgeProvider {
         "Vertex mode requires the optional peer dependency `@google/genai`. Install it with: npm install @google/genai",
       )
     }
+    // `@google/genai` builds `${location}-aiplatform.googleapis.com` for any
+    // non-`global` location. That's correct for regional endpoints
+    // (`us-east5-aiplatform.googleapis.com`) but wrong for the `us` multi-
+    // region identifier — that routes through the standard host with the
+    // multi-region tag in the URL path (`.../locations/us/...`). Without
+    // this override, every judge call against `us` silently fails (DNS
+    // miss on the invalid host) and paddock attributes 0 score to the
+    // judge, breaking multi-judge consensus.
+    //
+    // Mirrors `consensus_check.repository.ts` in the knoxai-agent runtime.
+    // `eu` is intentionally not handled: FedRAMP-aligned deployments keep
+    // ML processing inside US jurisdiction; a non-US multi-region is a
+    // deployment error and the SDK's 404 against the wrong host is the
+    // right failure mode there.
     this.mode.client = new GoogleGenAICtor({
       vertexai: true,
       project: this.mode.projectId,
       location: this.mode.region,
-    })
+      ...(this.mode.region === "us" && {
+        httpOptions: { baseUrl: "https://aiplatform.googleapis.com/" },
+      }),
+    } as ConstructorParameters<typeof GoogleGenAICtor>[0])
     return this.mode.client
   }
 
