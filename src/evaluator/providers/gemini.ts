@@ -111,7 +111,12 @@ export class GeminiJudgeProvider implements JudgeProvider {
       throw new Error("getVertexClient called outside Vertex mode")
     }
     if (this.mode.client) return this.mode.client
-    let GoogleGenAICtor: new (opts: { vertexai: boolean; project: string; location: string }) => GenAIClient
+    let GoogleGenAICtor: new (opts: {
+      vertexai: boolean
+      project: string
+      location: string
+      httpOptions?: { baseUrl?: string }
+    }) => GenAIClient
     try {
       const mod = await import("@google/genai")
       GoogleGenAICtor = mod.GoogleGenAI as unknown as typeof GoogleGenAICtor
@@ -120,11 +125,28 @@ export class GeminiJudgeProvider implements JudgeProvider {
         "Vertex mode requires the optional peer dependency `@google/genai`. Install it with: npm install @google/genai",
       )
     }
+    // `@google/genai` builds `${location}-aiplatform.googleapis.com` for any
+    // non-`global` location. That's correct for regional endpoints (e.g.
+    // `us-east5-aiplatform.googleapis.com`) but wrong for the `us` and `eu`
+    // multi-region identifiers — those route through the standard host with
+    // the multi-region tag in the URL path (`.../locations/us/...`). Without
+    // this override every judge call against a multi-region silently fails
+    // (DNS miss on the invalid host) and paddock attributes 0 score to the
+    // judge, breaking multi-judge consensus.
+    //
+    // `global` and any single-region value (`us-central1`, `europe-west4`,
+    // etc.) fall through to the SDK's default URL construction, which is
+    // already correct for those cases.
+    const isMultiRegion =
+      this.mode.region === "us" || this.mode.region === "eu"
     this.mode.client = new GoogleGenAICtor({
       vertexai: true,
       project: this.mode.projectId,
       location: this.mode.region,
-    })
+      ...(isMultiRegion && {
+        httpOptions: { baseUrl: "https://aiplatform.googleapis.com/" },
+      }),
+    } as ConstructorParameters<typeof GoogleGenAICtor>[0])
     return this.mode.client
   }
 
