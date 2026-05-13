@@ -86,14 +86,26 @@ no Vertex offering.
 VERTEX_PROJECT_ID=your-gcp-project
 VERTEX_REGION=us-east5
 
-# Optional — keep direct OpenAI key alongside Vertex Claude+Gemini
+# Optional — declare the full Vertex judge panel as a comma-separated list
+# of model IDs. Lets you run multiple Claude judges (e.g. Sonnet + Opus) for
+# 3-judge consensus without needing OpenAI. When unset, paddock defaults to
+# 1 Claude (EVAL_CLAUDE_JUDGE_MODEL) + 1 Gemini (EVAL_GEMINI_JUDGE_MODEL).
+VERTEX_JUDGES=claude-sonnet-4-6,claude-opus-4-7,gemini-2.5-pro
+
+# Optional — adds an OpenAI judge alongside the Vertex ones (always direct).
+# Omit for FedRAMP-strict deployments that can't call api.openai.com.
 OPENAI_API_KEY=sk-...
 ```
 
 The env-var names are deliberately platform-named (`VERTEX_*`) rather
-than vendor-named: in this mode Vertex hosts **both** judges (Claude via
-`@anthropic-ai/vertex-sdk`, Gemini via `@google/genai`), so a single
-platform-named pair gates both judges symmetrically.
+than vendor-named: in this mode Vertex hosts **both** judge providers
+(Claude via `@anthropic-ai/vertex-sdk`, Gemini via `@google/genai`), so a
+single platform-named env namespace gates both judges symmetrically.
+
+Provider for each entry in `VERTEX_JUDGES` is inferred from the model-name
+prefix: `claude-*` → Anthropic-on-Vertex, `gemini-*` → Google-on-Vertex.
+Putting a `gpt-*` model in the list errors fast at startup — OpenAI is
+not on Vertex; use `OPENAI_API_KEY` to add an OpenAI judge.
 
 Vertex mode requires installing two optional peer dependencies (paddock
 declares them as optional so direct-API users don't pay the install cost):

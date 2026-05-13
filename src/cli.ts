@@ -7,7 +7,7 @@ import { saveReport } from "./report/writer"
 import { formatTokenUsage } from "./report/formatter"
 import type { EvalConfig, JudgeProviderConfig, ScenarioCategory, Difficulty } from "./types"
 import { DEFAULT_BLOCKED_TOOLS } from "./types"
-import { detectVertexMode } from "./evaluator/providers/vertex-env"
+import { detectVertexMode, parseVertexJudges } from "./evaluator/providers/vertex-env"
 
 // ─── Helpers ─────────────────────────────────────────────────
 
@@ -65,6 +65,11 @@ ${bold("Environment:")}
   Default Credentials.
     VERTEX_PROJECT_ID          GCP project where Vertex AI is enabled
     VERTEX_REGION              GCP region — e.g. us-east5
+    VERTEX_JUDGES              Optional. Comma-separated model IDs that
+                               declare the full Vertex judge panel — e.g.
+                               "claude-sonnet-4-6,claude-opus-4-7,gemini-2.5-pro"
+                               for 3-judge consensus without OpenAI. Unset →
+                               defaults to 1 Claude + 1 Gemini.
 
   Other:
     EVAL_REPO_ROOT             Override repo root
@@ -108,18 +113,27 @@ function buildJudgeConfigs(): JudgeProviderConfig[] {
   const geminiModel = process.env.EVAL_GEMINI_JUDGE_MODEL ?? "gemini-2.5-pro"
 
   if (vertex) {
-    configs.push({
-      type: "claude-vertex",
-      model: claudeModel,
-      projectId: vertex.projectId,
-      region: vertex.region,
-    })
-    configs.push({
-      type: "gemini-vertex",
-      model: geminiModel,
-      projectId: vertex.projectId,
-      region: vertex.region,
-    })
+    // VERTEX_JUDGES, when set, is a comma-separated list of model IDs that
+    // explicitly declares the Vertex-routed judge panel (e.g. Sonnet + Opus
+    // + Gemini for 3-judge consensus without OpenAI). When unset, paddock
+    // defaults to one Claude + one Gemini using EVAL_*_JUDGE_MODEL.
+    const explicitPanel = process.env.VERTEX_JUDGES?.trim()
+    if (explicitPanel) {
+      configs.push(...parseVertexJudges(explicitPanel, vertex))
+    } else {
+      configs.push({
+        type: "claude-vertex",
+        model: claudeModel,
+        projectId: vertex.projectId,
+        region: vertex.region,
+      })
+      configs.push({
+        type: "gemini-vertex",
+        model: geminiModel,
+        projectId: vertex.projectId,
+        region: vertex.region,
+      })
+    }
   } else {
     // Direct-API mode. Prefer CLAUDE_CODE_OAUTH_TOKEN (supports
     // comma-separated rotation), fall back to ANTHROPIC_API_KEY.

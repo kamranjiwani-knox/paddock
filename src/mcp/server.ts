@@ -4,7 +4,7 @@ import type { EvalConfig, JudgeProviderConfig, LoopState, ScenarioCategory, Diff
 import { DEFAULT_BLOCKED_TOOLS } from "../types"
 import { loadScenarios, loadPaddockConfig } from "../scenario/loader"
 import { resolve } from "path"
-import { detectVertexMode } from "../evaluator/providers/vertex-env"
+import { detectVertexMode, parseVertexJudges } from "../evaluator/providers/vertex-env"
 
 // Active orchestrator instance (one at a time)
 let activeOrchestrator: EvalOrchestrator | null = null
@@ -17,18 +17,23 @@ function buildJudgeConfigs(): JudgeProviderConfig[] {
   // in the MCP entry path that does.
   const vertex = detectVertexMode()
   if (vertex) {
-    configs.push({
-      type: "claude-vertex",
-      model: "claude-sonnet-4-6",
-      projectId: vertex.projectId,
-      region: vertex.region,
-    })
-    configs.push({
-      type: "gemini-vertex",
-      model: "gemini-2.5-pro",
-      projectId: vertex.projectId,
-      region: vertex.region,
-    })
+    const explicitPanel = process.env.VERTEX_JUDGES?.trim()
+    if (explicitPanel) {
+      configs.push(...parseVertexJudges(explicitPanel, vertex))
+    } else {
+      configs.push({
+        type: "claude-vertex",
+        model: "claude-sonnet-4-6",
+        projectId: vertex.projectId,
+        region: vertex.region,
+      })
+      configs.push({
+        type: "gemini-vertex",
+        model: "gemini-2.5-pro",
+        projectId: vertex.projectId,
+        region: vertex.region,
+      })
+    }
   } else {
     const claudeKey = process.env.CLAUDE_CODE_OAUTH_TOKEN ?? process.env.ANTHROPIC_API_KEY
     if (claudeKey) {
