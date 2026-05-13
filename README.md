@@ -87,9 +87,10 @@ VERTEX_PROJECT_ID=your-gcp-project
 VERTEX_REGION=us-east5
 
 # Optional — declare the full Vertex judge panel as a comma-separated list
-# of model IDs. Lets you run multiple Claude judges (e.g. Sonnet + Opus) for
-# 3-judge consensus without needing OpenAI. When unset, paddock defaults to
-# 1 Claude (EVAL_CLAUDE_JUDGE_MODEL) + 1 Gemini (EVAL_GEMINI_JUDGE_MODEL).
+# of model IDs (max 3 entries). Lets you run multiple Claude judges (e.g.
+# Sonnet + Opus) for 3-judge consensus without needing OpenAI. When unset,
+# paddock defaults to 1 Claude (EVAL_CLAUDE_JUDGE_MODEL) + 1 Gemini
+# (EVAL_GEMINI_JUDGE_MODEL).
 VERTEX_JUDGES=claude-sonnet-4-6,claude-opus-4-7,gemini-2.5-pro
 
 # Optional — adds an OpenAI judge alongside the Vertex ones (always direct).

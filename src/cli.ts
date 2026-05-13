@@ -65,9 +65,9 @@ ${bold("Environment:")}
   Default Credentials.
     VERTEX_PROJECT_ID          GCP project where Vertex AI is enabled
     VERTEX_REGION              GCP region — e.g. us-east5
-    VERTEX_JUDGES              Optional. Comma-separated model IDs that
-                               declare the full Vertex judge panel — e.g.
-                               "claude-sonnet-4-6,claude-opus-4-7,gemini-2.5-pro"
+    VERTEX_JUDGES              Optional. Comma-separated model IDs (max 3)
+                               that declare the full Vertex judge panel —
+                               e.g. "claude-sonnet-4-6,claude-opus-4-7,gemini-2.5-pro"
                                for 3-judge consensus without OpenAI. Unset →
                                defaults to 1 Claude + 1 Gemini.
 

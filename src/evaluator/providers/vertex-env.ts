@@ -35,6 +35,18 @@ export function detectVertexMode(): { projectId: string; region: string } | null
 type VertexJudgeConfig = ClaudeVertexJudgeConfig | GeminiVertexJudgeConfig
 
 /**
+ * Upper bound on the Vertex judge panel size. Paddock's consensus engine
+ * is designed around odd-numbered judge counts (so median + majority vote
+ * are unambiguous). With 3 judges every disagreement resolves cleanly via
+ * 2-of-3 majority; going higher hits diminishing returns vs LLM cost +
+ * latency. Hard-capped at 3 for now — operators who want larger panels
+ * (e.g. for noise-reduction experiments) can embed paddock as a library
+ * and pass the full judges array to `runEvaluation()` directly,
+ * bypassing this CLI/MCP entry-point limit.
+ */
+export const MAX_VERTEX_JUDGES = 3
+
+/**
  * Parse the optional `VERTEX_JUDGES` env value into typed Vertex judge
  * configs. The env value is a comma-separated list of model IDs; paddock
  * infers the provider from the model-name prefix:
@@ -50,9 +62,13 @@ type VertexJudgeConfig = ClaudeVertexJudgeConfig | GeminiVertexJudgeConfig
  * Duplicate model IDs are allowed (the orchestrator's `${name}/${model}`
  * usage key collapses them naturally).
  *
- * Throws a fail-fast Error at config-build time for any unrecognized or
- * disallowed prefix — paddock prefers a clear error at startup to a less
- * obvious failure deep inside an SDK call later.
+ * Validation rules (all fail-fast at config-build time):
+ *   - At least one model ID after parsing (rejects empty / whitespace-only).
+ *   - At most `MAX_VERTEX_JUDGES` model IDs (currently 3).
+ *   - Each model ID has a recognized provider prefix.
+ *   - No `gpt-*` / `o<n>-*` (OpenAI) entries — they would silently fail at
+ *     Vertex API call time; better to refuse them up front with a pointer
+ *     to the correct path (`OPENAI_API_KEY`).
  */
 export function parseVertexJudges(
   raw: string,
@@ -64,6 +80,12 @@ export function parseVertexJudges(
     .filter(Boolean)
   if (models.length === 0) {
     throw new Error("VERTEX_JUDGES is set but contains no valid model IDs after trimming whitespace.")
+  }
+  if (models.length > MAX_VERTEX_JUDGES) {
+    throw new Error(
+      `VERTEX_JUDGES contains ${models.length} model IDs; paddock's CLI/MCP entry points currently support up to ${MAX_VERTEX_JUDGES} judges per Vertex panel. ` +
+        `Trim the list, or embed paddock as a library and pass the full judges array to runEvaluation() directly.`,
+    )
   }
   return models.map((model): VertexJudgeConfig => {
     if (model.startsWith("claude-")) {
