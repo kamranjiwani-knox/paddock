@@ -124,6 +124,14 @@ EVAL_LLM_MODEL=claude-sonnet-4-6
 EVAL_CLAUDE_JUDGE_MODEL=claude-sonnet-4-6
 EVAL_GEMINI_JUDGE_MODEL=gemini-2.5-pro
 EVAL_OPENAI_JUDGE_MODEL=gpt-4o
+
+# Judge tuning — applies to every judge (direct + Vertex)
+EVAL_JUDGE_THINKING_BUDGET=8000   # Reasoning tokens per call. 0 disables
+                                  # thinking on Claude/Gemini (OpenAI reasoning
+                                  # models clamp to "medium").
+EVAL_JUDGE_MAX_TOKENS=16000       # Max output tokens per judge call. Generous
+                                  # on purpose so thinking + final scored
+                                  # output fit on hard scenarios.
 ```
 
 ## Usage

@@ -78,6 +78,14 @@ ${bold("Environment:")}
     EVAL_CLAUDE_JUDGE_MODEL    Claude judge model (default: claude-sonnet-4-6)
     EVAL_GEMINI_JUDGE_MODEL    Gemini judge model (default: gemini-2.5-pro)
     EVAL_OPENAI_JUDGE_MODEL    OpenAI judge model (default: gpt-4o)
+
+  Judge tuning (applies uniformly to every judge — direct or Vertex):
+    EVAL_JUDGE_THINKING_BUDGET Reasoning tokens per judge call (default: 8000).
+                               Set 0 to disable thinking on Claude / Gemini;
+                               OpenAI reasoning models clamp to "medium".
+    EVAL_JUDGE_MAX_TOKENS      Max output tokens per judge call (default: 16000).
+                               Generous on purpose — leaves room for thinking
+                               blocks + final scored output on hard scenarios.
 `)
 }
 
